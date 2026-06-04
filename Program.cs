@@ -10,15 +10,17 @@ if (!MLKem.IsSupported)
 MLKemAlgorithm alg = MLKemAlgorithm.MLKem768;
 const int iterations = 100;
 
+using MLKem mlkemServerKey = MLKem.GenerateKey(alg);
+byte[] mlkemServerPublicKey = mlkemServerKey.ExportEncapsulationKey();
+
 Stopwatch stopwatch = Stopwatch.StartNew();
 int matches = 0;
 
 for (int i = 0; i < iterations; i++)
 {
-    using MLKem privateKey = MLKem.GenerateKey(alg);
-    using MLKem publicKey = MLKem.ImportEncapsulationKey(alg, privateKey.ExportEncapsulationKey());
+    using MLKem publicKey = MLKem.ImportEncapsulationKey(alg, mlkemServerPublicKey);
     publicKey.Encapsulate(out byte[] ciphertext, out byte[] sharedSecret1);
-    byte[] sharedSecret2 = privateKey.Decapsulate(ciphertext);
+    byte[] sharedSecret2 = mlkemServerKey.Decapsulate(ciphertext);
 
     if (sharedSecret1.AsSpan().SequenceEqual(sharedSecret2))
     {
@@ -32,7 +34,7 @@ for (int i = 0; i < iterations; i++)
         Console.WriteLine($"Round-trip {i + 1} failed. Different answers:");
         Console.WriteLine($"sharedSecret1: {Convert.ToHexString(sharedSecret1)}");
         Console.WriteLine($"sharedSecret2: {Convert.ToHexString(sharedSecret2)}");
-        Console.WriteLine($"MLKEM768 seed: {Convert.ToHexString(privateKey.ExportPrivateSeed())}");
+        Console.WriteLine($"MLKEM768 seed: {Convert.ToHexString(mlkemServerKey.ExportPrivateSeed())}");
         Console.WriteLine("You just got the one in 2^165 failure. There's probably a prize for that.");
         Console.WriteLine($"Round-trip {i + 1} failed.");
     }
@@ -40,3 +42,24 @@ for (int i = 0; i < iterations; i++)
 
 stopwatch.Stop();
 Console.WriteLine($"ML-KEM {alg.Name} benchmark: {matches}/{iterations} successful round-trips in {stopwatch.Elapsed.TotalMilliseconds:N2} ms");
+
+using ECDiffieHellman ecdhServerKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+
+Stopwatch ecdhStopwatch = Stopwatch.StartNew();
+int ecdhMatches = 0;
+
+for (int i = 0; i < iterations; i++)
+{
+    using ECDiffieHellman clientKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+
+    byte[] sharedSecret1 = clientKey.DeriveKeyMaterial(ecdhServerKey.PublicKey);
+    byte[] sharedSecret2 = ecdhServerKey.DeriveKeyMaterial(clientKey.PublicKey);
+
+    if (sharedSecret1.AsSpan().SequenceEqual(sharedSecret2))
+    {
+        ecdhMatches++;
+    }
+}
+
+ecdhStopwatch.Stop();
+Console.WriteLine($"ECDH P-256 benchmark: {ecdhMatches}/{iterations} successful round-trips in {ecdhStopwatch.Elapsed.TotalMilliseconds:N2} ms");
