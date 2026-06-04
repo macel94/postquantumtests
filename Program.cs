@@ -21,12 +21,14 @@ for (int i = 0; i < iterations; i++)
     using MLKem publicKey = MLKem.ImportEncapsulationKey(alg, mlkemServerPublicKey);
     publicKey.Encapsulate(out byte[] ciphertext, out byte[] sharedSecret1);
     byte[] sharedSecret2 = mlkemServerKey.Decapsulate(ciphertext);
+    byte[] handshakeSecret1 = SHA256.HashData(sharedSecret1);
+    byte[] handshakeSecret2 = SHA256.HashData(sharedSecret2);
 
-    if (sharedSecret1.AsSpan().SequenceEqual(sharedSecret2))
+    if (handshakeSecret1.AsSpan().SequenceEqual(handshakeSecret2))
     {
         matches++;
 #if DEBUG
-        Console.WriteLine($"Round-trip {i + 1} successful. Same answer: {Convert.ToHexString(sharedSecret1)}");
+        Console.WriteLine($"Round-trip {i + 1} successful. Same answer: {Convert.ToHexString(handshakeSecret1)}");
 #endif
     }
     else
@@ -52,10 +54,10 @@ for (int i = 0; i < iterations; i++)
 {
     using ECDiffieHellman clientKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
 
-    byte[] sharedSecret1 = clientKey.DeriveKeyMaterial(ecdhServerKey.PublicKey);
-    byte[] sharedSecret2 = ecdhServerKey.DeriveKeyMaterial(clientKey.PublicKey);
+    byte[] handshakeSecret1 = clientKey.DeriveKeyFromHash(ecdhServerKey.PublicKey, HashAlgorithmName.SHA256);
+    byte[] handshakeSecret2 = ecdhServerKey.DeriveKeyFromHash(clientKey.PublicKey, HashAlgorithmName.SHA256);
 
-    if (sharedSecret1.AsSpan().SequenceEqual(sharedSecret2))
+    if (handshakeSecret1.AsSpan().SequenceEqual(handshakeSecret2))
     {
         ecdhMatches++;
     }
