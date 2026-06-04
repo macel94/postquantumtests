@@ -1,0 +1,13 @@
+{
+  "name": "postquantumdotnettest",
+  "image": "mcr.microsoft.com/devcontainers/dotnet",
+  "postCreateCommand": "bash .devcontainer/install-openssl-3.5.sh && dotnet restore",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-dotnettools.csharp",
+        "ms-dotnettools.csdevkit"
+      ]
+    }
+  }
+}

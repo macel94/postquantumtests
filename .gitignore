@@ -1,0 +1,38 @@
+# Build outputs
+bin/
+obj/
+out/
+
+# Visual Studio / Rider / VS Code user files
+.vs/
+.idea/
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+*.rsuser
+
+# Test and coverage artifacts
+TestResults/
+*.coverage
+*.coveragexml
+*.trx
+
+# Publish artifacts
+publish/
+wwwroot/dist/
+
+# Package managers and tooling caches
+packages/
+*.nupkg
+*.snupkg
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+*.log
+
+# Local environment files
+.env
+.env.*
+*.local
