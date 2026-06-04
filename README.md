@@ -61,6 +61,8 @@ The TLS benchmark reports:
 - Server certificate algorithm
 - Configured key exchange group
 
+The cipher suite is expected to be the same for both runs in this repo, most often `TLS_AES_256_GCM_SHA384`. In TLS 1.3, that value describes the symmetric record-protection suite, not whether the handshake used classical or post-quantum key exchange. The real comparison points here are the negotiated group and the certificate algorithm.
+
 ## What the numbers mean
 
 The console benchmark is a lower-level crypto comparison. It measures key exchange and derived-secret work without socket setup.
@@ -68,6 +70,8 @@ The console benchmark is a lower-level crypto comparison. It measures key exchan
 The TLS benchmark is end to end. It includes localhost networking, `SslStream` handshake setup, certificate validation, and the encrypted echo round trip.
 
 That makes the TLS numbers more representative of a real application, while the console benchmark is still useful for isolating crypto cost.
+
+If you see the same cipher suite in both the classical and PQ runs, that is not a sign the benchmark is broken. TLS 1.3 keeps the record-layer cipher suite separate from the handshake key exchange, so both scenarios can legitimately use the same suite while still exercising different handshake groups.
 
 ## Notes
 
