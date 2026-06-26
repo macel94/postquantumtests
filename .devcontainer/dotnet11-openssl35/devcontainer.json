@@ -1,0 +1,21 @@
+{
+  "name": "postquantumdotnettest (.NET 11 preview / OpenSSL 3.5)",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/dotnet:2": {
+      "version": "11.0-preview"
+    }
+  },
+  "containerEnv": {
+    "DOTNET_TARGET_FRAMEWORK": "net11.0"
+  },
+  "postCreateCommand": "bash .devcontainer/install-openssl.sh 3.5.0 && dotnet restore postquantumdotnettest.csproj -p:TargetFramework=net11.0 && dotnet restore TlsE2eBenchmark/TlsE2eBenchmark.csproj -p:TargetFramework=net11.0",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-dotnettools.csharp",
+        "ms-dotnettools.csdevkit"
+      ]
+    }
+  }
+}

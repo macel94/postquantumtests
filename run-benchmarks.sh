@@ -6,6 +6,7 @@ root_dir=$(cd "$(dirname "$0")" && pwd)
 artifacts_dir="$root_dir/artifacts"
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 run_dir="$artifacts_dir/$timestamp"
+target_framework="${DOTNET_TARGET_FRAMEWORK:-net10.0}"
 
 mkdir -p "$run_dir"
 
@@ -14,12 +15,15 @@ tls_output="$run_dir/tls.txt"
 summary_markdown="$run_dir/summary.md"
 summary_json="$run_dir/summary.json"
 
+echo "Target framework: $target_framework"
+echo
+
 echo "Running console benchmark in Release mode..."
-dotnet run -c Release --project "$root_dir/postquantumdotnettest.csproj" | tee "$console_output"
+dotnet run -c Release --framework "$target_framework" --project "$root_dir/postquantumdotnettest.csproj" | tee "$console_output"
 
 echo
 echo "Running TLS benchmark in Release mode..."
-dotnet run -c Release --project "$root_dir/TlsE2eBenchmark/TlsE2eBenchmark.csproj" -- --scenario all --iterations 100 | tee "$tls_output"
+dotnet run -c Release --framework "$target_framework" --project "$root_dir/TlsE2eBenchmark/TlsE2eBenchmark.csproj" -- --scenario all --iterations 100 | tee "$tls_output"
 
 python3 - "$console_output" "$tls_output" "$summary_markdown" "$summary_json" <<'PY'
 import pathlib

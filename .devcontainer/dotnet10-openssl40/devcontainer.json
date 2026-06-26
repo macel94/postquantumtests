@@ -1,5 +1,5 @@
 {
-  "name": "postquantumdotnettest (.NET 10 / OpenSSL 3.5)",
+  "name": "postquantumdotnettest (.NET 10 / OpenSSL 4.0)",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "features": {
     "ghcr.io/devcontainers/features/dotnet:2": {
@@ -9,7 +9,7 @@
   "containerEnv": {
     "DOTNET_TARGET_FRAMEWORK": "net10.0"
   },
-  "postCreateCommand": "bash .devcontainer/install-openssl.sh 3.5.0 && dotnet restore postquantumdotnettest.csproj -p:TargetFramework=net10.0 && dotnet restore TlsE2eBenchmark/TlsE2eBenchmark.csproj -p:TargetFramework=net10.0",
+  "postCreateCommand": "bash .devcontainer/install-openssl.sh 4.0.0 && dotnet restore postquantumdotnettest.csproj -p:TargetFramework=net10.0 && dotnet restore TlsE2eBenchmark/TlsE2eBenchmark.csproj -p:TargetFramework=net10.0",
   "customizations": {
     "vscode": {
       "extensions": [
