@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,7 +15,7 @@ import (
 	"time"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 var goBenchmarks = map[string]string{
 	"BenchmarkMLKEM768RoundTrip":       "raw_mlkem768",
@@ -24,19 +25,26 @@ var goBenchmarks = map[string]string{
 }
 
 type support struct {
-	RawMLKEM768       bool `json:"raw_mlkem768"`
-	TLSX25519MLKEM768 bool `json:"tls_x25519_mlkem768"`
-	PQCertificate     bool `json:"pq_certificate"`
+	RawMLKEM768               bool `json:"raw_mlkem768"`
+	TLSPostQuantumKeyExchange bool `json:"tls_post_quantum_key_exchange"`
+	TLSX25519MLKEM768         bool `json:"tls_x25519_mlkem768,omitempty"`
+	PQCertificate             bool `json:"pq_certificate"`
 }
 
 type result struct {
-	AverageMS            *float64 `json:"average_ms"`
-	Iterations           int      `json:"iterations"`
-	Status               string   `json:"status"`
-	Protocol             string   `json:"protocol,omitempty"`
-	CipherSuite          string   `json:"cipher_suite,omitempty"`
-	KeyExchangeGroup     string   `json:"key_exchange_group,omitempty"`
-	CertificateAlgorithm string   `json:"certificate_algorithm,omitempty"`
+	MedianMS              *float64 `json:"median_ms,omitempty"`
+	AverageMS             *float64 `json:"average_ms,omitempty"`
+	SamplesMS             []float64 `json:"samples_ms,omitempty"`
+	SampleCount           int      `json:"sample_count,omitempty"`
+	RelativeStdDevPercent *float64 `json:"relative_stddev_percent,omitempty"`
+	Iterations            int      `json:"iterations"`
+	Status                string   `json:"status"`
+	Workload              string   `json:"workload,omitempty"`
+	Protocol              string   `json:"protocol,omitempty"`
+	CipherSuite           string   `json:"cipher_suite,omitempty"`
+	KeyExchangeGroup      string   `json:"key_exchange_group,omitempty"`
+	CertificateAlgorithm  string   `json:"certificate_algorithm,omitempty"`
+	CertificateValidation string   `json:"certificate_validation,omitempty"`
 }
 
 type record struct {
@@ -47,7 +55,8 @@ type record struct {
 	RuntimeChannel      string                 `json:"runtime_channel"`
 	OpenSSLVersion      *string                `json:"openssl_version"`
 	OpenSSLBackend      string                 `json:"openssl_backend"`
-	RunElapsedMS        float64                `json:"run_elapsed_ms"`
+	OpenSSLLibrary       string                 `json:"openssl_library,omitempty"`
+	RunElapsedMS         float64                `json:"run_elapsed_ms,omitempty"`
 	PostQuantumSupport  support                `json:"post_quantum_support"`
 	NegotiationEvidence map[string]string      `json:"negotiation_evidence,omitempty"`
 	Console             map[string]interface{} `json:"console,omitempty"`
@@ -65,6 +74,9 @@ var averagePattern = regexp.MustCompile(`Average: ([0-9.]+) ms/handshake`)
 var supportPattern = regexp.MustCompile(`ML-KEM MLKEM-768 support: (supported|unsupported)`)
 var roundTripPattern = regexp.MustCompile(`(\d+)/(\d+) successful round-trips in ([0-9.]+) ms`)
 var lineValuePattern = regexp.MustCompile(`(?m)^  ([^:]+): ([^\r\n]+)$`)
+
+const tlsWorkload = "tls13-loopback-fresh-connection-32-byte-echo"
+const rawWorkload = "fresh-client-reused-server-raw-shared-secret"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -648,6 +660,36 @@ func writeJSON(path string, value interface{}) error {
 }
 
 func nowUTC() string { return time.Now().UTC().Format(time.RFC3339Nano) }
+
+func resultFromSamples(samples []float64, iterations int, status string) (result, error) {
+	if len(samples) == 0 {
+		return result{}, errors.New("missing benchmark samples")
+	}
+	ordered := append([]float64(nil), samples...)
+	sort.Float64s(ordered)
+	median := ordered[len(ordered)/2]
+	if len(ordered)%2 == 0 {
+		median = (ordered[len(ordered)/2-1] + ordered[len(ordered)/2]) / 2
+	}
+	var relative *float64
+	if len(samples) > 1 {
+		mean := 0.0
+		for _, sample := range samples {
+			mean += sample
+		}
+		mean /= float64(len(samples))
+		if mean != 0 {
+			variance := 0.0
+			for _, sample := range samples {
+				difference := sample - mean
+				variance += difference * difference
+			}
+			value := math.Sqrt(variance/float64(len(samples)-1)) / mean * 100
+			relative = &value
+		}
+	}
+	return result{MedianMS: &median, SamplesMS: samples, SampleCount: len(samples), RelativeStdDevPercent: relative, Iterations: iterations, Status: status}, nil
+}
 
 func fatal(err error) {
 	fmt.Fprintf(os.Stderr, "benchmark comparison failed: %v\n", err)

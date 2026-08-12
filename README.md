@@ -16,6 +16,39 @@ This repository compares post-quantum and classical key exchange costs in .NET a
 
 The Go tests use only the standard library. They do not require OpenSSL.
 
+## Benchmark methodology
+
+Restore and build work happens before measurement. The .NET runner executes the
+already-built Release assemblies with `dotnet run --no-build`; it records five
+independent process samples by default. Set `BENCHMARK_REPETITIONS` to change
+the sample count.
+
+Go benchmarks use `go test -bench . -benchtime=100x -count=5`. The comparison
+record stores per-operation samples, their median, and sample relative standard
+deviation (RSD). Restore, build, process startup, and report-generation time are
+not performance metrics and are excluded from the comparison table.
+
+The raw primitive workload uses a reusable server key and a fresh client key per
+iteration. ML-KEM measures encapsulation and decapsulation. ECDH measures raw
+P-256 shared-secret agreement on both sides without adding a KDF to one
+implementation only.
+
+The TLS workload uses TLS 1.3 over a fresh loopback TCP connection for every
+sampled handshake, certificate validation, and a 32-byte echo. Reports include
+the negotiated protocol, cipher suite, key-exchange group, certificate
+algorithm, and validation policy. A TLS comparison is meaningful only when
+those workload fields match.
+
+The Go PQ scenario uses hybrid `X25519MLKEM768` with an ECDSA P-256
+certificate. The current .NET PQ scenario uses pure `MLKEM768` with an ML-DSA-65
+certificate, so it is reported as a different workload rather than an
+apples-to-apples Go comparison. Its time includes both certificate and key
+exchange work.
+
+OpenSSL version and loaded library are recorded separately. A row where PQ
+algorithms are unsupported is a capability result and is shown as `n/a`; it must
+not be interpreted as an OpenSSL performance regression.
+
 ## Repository layout
 
 ```text
@@ -64,7 +97,16 @@ The runner defaults to `net10.0`. Select the .NET 11 preview explicitly:
 DOTNET_TARGET_FRAMEWORK=net11.0 bash dotnet/run-benchmarks.sh
 ```
 
-The runner restores both projects for the selected target framework, runs the raw crypto and TLS benchmarks, and writes reports under `dotnet/artifacts/`. The report parser is the Go tool in `go/cmd/benchmarkcompare`.
+The runner restores and builds both projects for the selected target framework,
+then runs the raw crypto and TLS benchmarks from the built Release outputs. It
+writes reports under `dotnet/artifacts/`; the report parser is the Go tool in
+`go/cmd/benchmarkcompare`.
+
+Use `BENCHMARK_REPETITIONS` to control independent .NET process samples:
+
+```bash
+BENCHMARK_REPETITIONS=10 DOTNET_TARGET_FRAMEWORK=net11.0 bash dotnet/run-benchmarks.sh
+```
 
 Run the raw benchmark directly:
 
