@@ -1,6 +1,6 @@
 {
   "name": "postquantumtests (Go + .NET 10)",
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-latest",
   "features": {
     "ghcr.io/devcontainers/features/dotnet:2": {
       "version": "10.0"

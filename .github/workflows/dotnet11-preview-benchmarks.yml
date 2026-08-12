@@ -1,9 +1,11 @@
 name: .NET 11 Preview Benchmarks
 
 on:
+  push:
+    paths:
+      - "dotnet/**"
+      - ".github/workflows/dotnet11-preview-benchmarks.yml"
   workflow_dispatch:
-  schedule:
-    - cron: "17 5 * * 1"
 
 permissions:
   contents: read
@@ -11,7 +13,7 @@ permissions:
 jobs:
   benchmarks:
     name: .NET 11 preview / OpenSSL ${{ matrix.label }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false

@@ -41,11 +41,13 @@ The CI surface is split into independent workflows with one purpose each:
 | Workflow | Purpose | Trigger |
 | --- | --- | --- |
 | [OpenSSL Toolchain Cache](.github/workflows/openssl-toolchains.yml) | Build and warm the shared OpenSSL 3.5/4.0 caches | Manual or weekly |
-| [.NET 10 Benchmarks](.github/workflows/dotnet10-benchmarks.yml) | Run .NET 10 against OpenSSL 3.5 and 4.0 | Manual or weekly |
-| [.NET 11 Preview Benchmarks](.github/workflows/dotnet11-preview-benchmarks.yml) | Run .NET 11 preview against OpenSSL 3.5 and 4.0 | Manual or weekly |
+| [.NET 10 Benchmarks](.github/workflows/dotnet10-benchmarks.yml) | Run .NET 10 against OpenSSL 3.5 and 4.0 | Push when `dotnet/**` changes or manual |
+| [.NET 11 Preview Benchmarks](.github/workflows/dotnet11-preview-benchmarks.yml) | Run .NET 11 preview against OpenSSL 3.5 and 4.0 | Push when `dotnet/**` changes or manual |
 | [Go Tests and Benchmarks](.github/workflows/go-tests-and-benchmarks.yml) | Run Go tests, vet, race checks, and benchmarks | Push, pull request, or manual |
 
 The OpenSSL toolchain workflow builds each version once and stores the installed prefix in the GitHub Actions cache. The .NET workflows use the same versioned cache key. On a cache hit, [install-openssl.sh](.devcontainer/install-openssl.sh) only restores the loader configuration and verifies the exact version instead of compiling OpenSSL again.
+
+The OpenSSL 3.5/4.0 matrix applies to the .NET TLS benchmarks. The Go tests use the standard-library `crypto/tls`, `crypto/mlkem`, and `crypto/ecdh` packages and do not link to the system OpenSSL library, so changing the installed OpenSSL version would not change the Go implementation. A Go/OpenSSL matrix would require adding a cgo binding or another OpenSSL-backed TLS implementation.
 
 ## Run the .NET benchmarks
 

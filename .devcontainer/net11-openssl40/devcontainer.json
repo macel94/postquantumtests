@@ -1,6 +1,6 @@
 {
   "name": "postquantumtests (.NET 11 preview / OpenSSL 4.0)",
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-latest",
   "features": {
     "ghcr.io/devcontainers/features/dotnet:2": {
       "version": "11.0-preview"

@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     name: OpenSSL ${{ matrix.label }} toolchain
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
