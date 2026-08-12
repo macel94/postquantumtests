@@ -12,7 +12,6 @@ This repository compares post-quantum and classical key exchange costs in .NET a
 - Linux
 - .NET 10 SDK, or the .NET 11 preview SDK for `net11.0` runs
 - Go 1.26 or newer
-- Python 3 for the .NET report-producing runner
 - OpenSSL 3.5.0 or 4.0.0 for the .NET TLS post-quantum scenario
 
 The Go tests use only the standard library. They do not require OpenSSL.
@@ -27,6 +26,7 @@ dotnet/
 go/
   raw_test.go          Raw ML-KEM and ECDH tests and benchmarks
   tls_test.go          TLS 1.3 tests and benchmarks
+  cmd/benchmarkcompare Go report parser and comparison generator
 .devcontainer/
   net10-openssl35/     .NET 10 with OpenSSL 3.5
   net10-openssl40/     .NET 10 with OpenSSL 4.0
@@ -41,9 +41,10 @@ The CI surface is split into independent workflows with one purpose each:
 | Workflow | Purpose | Trigger |
 | --- | --- | --- |
 | [OpenSSL Toolchain Cache](.github/workflows/openssl-toolchains.yml) | Build and warm the shared OpenSSL 3.5/4.0 caches | Manual or weekly |
-| [.NET 10 Benchmarks](.github/workflows/dotnet10-benchmarks.yml) | Run .NET 10 against OpenSSL 3.5 and 4.0 | Push when `dotnet/**` changes or manual |
-| [.NET 11 Preview Benchmarks](.github/workflows/dotnet11-preview-benchmarks.yml) | Run .NET 11 preview against OpenSSL 3.5 and 4.0 | Push when `dotnet/**` changes or manual |
+| [.NET 10 Benchmarks](.github/workflows/dotnet10-benchmarks.yml) | Run .NET 10 against OpenSSL 3.5 and 4.0 | Push when `dotnet/**` or the shared parser changes, or manual |
+| [.NET 11 Preview Benchmarks](.github/workflows/dotnet11-preview-benchmarks.yml) | Run .NET 11 preview against OpenSSL 3.5 and 4.0 | Push when `dotnet/**` or the shared parser changes, or manual |
 | [Go Tests and Benchmarks](.github/workflows/go-tests-and-benchmarks.yml) | Run Go tests, vet, race checks, and benchmarks | Push, pull request, or manual |
+| [Cross-Language Benchmark Comparison](.github/workflows/benchmark-comparison.yml) | Run Go and the complete .NET/OpenSSL matrix in one run and publish a comparison report | Push, pull request, or manual |
 
 The OpenSSL toolchain workflow builds each version once and stores the installed prefix in the GitHub Actions cache. The .NET workflows use the same versioned cache key. On a cache hit, [install-openssl.sh](.devcontainer/install-openssl.sh) only restores the loader configuration and verifies the exact version instead of compiling OpenSSL again.
 
@@ -63,7 +64,7 @@ The runner defaults to `net10.0`. Select the .NET 11 preview explicitly:
 DOTNET_TARGET_FRAMEWORK=net11.0 bash dotnet/run-benchmarks.sh
 ```
 
-The runner restores both projects for the selected target framework, runs the raw crypto and TLS benchmarks, and writes reports under `dotnet/artifacts/`.
+The runner restores both projects for the selected target framework, runs the raw crypto and TLS benchmarks, and writes reports under `dotnet/artifacts/`. The report parser is the Go tool in `go/cmd/benchmarkcompare`.
 
 Run the raw benchmark directly:
 
@@ -93,7 +94,7 @@ dotnet run --no-restore -c Release --framework net11.0 --project dotnet/tls/TlsE
 
 Available TLS options are `--scenario classical|pq|all`, `--iterations N`, `--warmup N`, and `--payload-bytes N`.
 
-The .NET TLS benchmark reports the TLS version, record-protection cipher suite, certificate algorithm, and negotiated key-exchange group. In TLS 1.3, the cipher suite is independent of the key-exchange group, so the negotiated group is the important classical/PQ comparison.
+The .NET TLS benchmark reports the TLS version, record-protection cipher suite, certificate algorithm, and configured key-exchange group. In TLS 1.3, the cipher suite is independent of the key-exchange group, so the classical/PQ group is the important comparison.
 
 ## Run the Go tests and benchmarks
 
@@ -109,7 +110,7 @@ The raw Go tests use ML-KEM-768 and ECDH P-256. The TLS tests create a local ECD
 
 ## Devcontainers
 
-The default [devcontainer.json](.devcontainer/devcontainer.json) provides Go 1.26, .NET 10, and Python 3 without compiling OpenSSL. Use one of the specialized containers when working on the .NET/OpenSSL matrix:
+The default [devcontainer.json](.devcontainer/devcontainer.json) provides Go 1.26 and .NET 10 without compiling OpenSSL. Use one of the specialized containers when working on the .NET/OpenSSL matrix:
 
 | Devcontainer | Environment |
 | --- | --- |
@@ -132,6 +133,15 @@ The raw benchmarks isolate cryptographic operations. The TLS benchmarks include 
 
 The .NET and Go raw ML-KEM-768 results are directly comparable at the algorithm level. Their PQ TLS scenarios are related but not identical: .NET uses its OpenSSL-backed ML-KEM-768 and ML-DSA certificate configuration, while Go's standard library currently exposes hybrid X25519+ML-KEM-768 key exchange and uses an ECDSA certificate. Compare each language's classical/PQ delta within its own workflow.
 
+## Cross-language comparison reports
+
+The [Cross-Language Benchmark Comparison](.github/workflows/benchmark-comparison.yml) workflow runs Go latest stable once, then runs .NET 10 and .NET 11 preview against OpenSSL 3.5.0 and 4.0.0. Its final `comparison-report` artifact contains:
+
+- `comparison.json`, with versioned machine-readable records for all five matrix legs.
+- `comparison.md`, with side-by-side whole-run, raw crypto, TLS, and PQ-support tables.
+
+Go's OpenSSL field is `null` and displayed as `Not used` because Go uses its standard-library TLS and cryptography implementations. It is not duplicated into the OpenSSL 3.5/4.0 rows. Go reports the authoritative negotiated TLS group from `tls.ConnectionState.CurveID`. The .NET report identifies its TLS group as the single group restricted by `OPENSSL_CONF`, because `SslStream` does not expose the named group directly through a public API.
+
 ## Dependency updates
 
-[Dependabot](.github/dependabot.yml) checks GitHub Actions and Devcontainer Features weekly. The Go module has no third-party dependencies, and the .NET projects have no NuGet package references.
+[Dependabot](.github/dependabot.yml) checks GitHub Actions, Dev Containers, Go modules, and NuGet projects weekly. Each ecosystem has a catch-all update group and an `open-pull-requests-limit` of `1`, so Dependabot creates at most one grouped update PR per ecosystem. The Go module currently has no third-party dependencies, and the .NET projects have no NuGet package references.

@@ -4,8 +4,45 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: "devcontainers"
-    directory: "/"
+    directories:
+      - "/.devcontainer"
+      - "/.devcontainer/net10-openssl35"
+      - "/.devcontainer/net10-openssl40"
+      - "/.devcontainer/net11-openssl35"
+      - "/.devcontainer/net11-openssl40"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 1
+    groups:
+      devcontainers:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "gomod"
+    directory: "/go"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 1
+    groups:
+      gomod:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "nuget"
+    directories:
+      - "/dotnet/raw-kem"
+      - "/dotnet/tls"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 1
+    groups:
+      nuget:
+        patterns:
+          - "*"

@@ -28,10 +28,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go/go.mod
           cache: true
@@ -51,12 +51,23 @@ jobs:
 
       - name: Run benchmarks
         if: matrix.mode == 'test'
-        run: go test -bench . -benchmem -benchtime=100x ./... | tee benchmark-results.txt
+        run: |
+          started_ns=$(date +%s%N)
+          go test -bench . -benchmem -benchtime=100x ./... | tee benchmark-results.txt
+          finished_ns=$(date +%s%N)
+          run_elapsed_ms=$(awk "BEGIN { printf \"%.3f\", ($finished_ns - $started_ns) / 1000000 }")
+          go run ./cmd/benchmarkcompare go \
+            --input benchmark-results.txt \
+            --output benchmark-record.json \
+            --runtime "$(go version | awk '{ print $3 }')" \
+            --run-elapsed-ms "$run_elapsed_ms"
 
       - name: Upload benchmark results
         if: always() && matrix.mode == 'test'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: go-benchmark-results
-          path: go/benchmark-results.txt
+          path: |
+            go/benchmark-results.txt
+            go/benchmark-record.json
           if-no-files-found: warn

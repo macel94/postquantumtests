@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "dotnet/**"
+      - "go/cmd/**"
       - ".github/workflows/dotnet10-benchmarks.yml"
   workflow_dispatch:
 
@@ -27,19 +28,28 @@ jobs:
             artifact: "dotnet-10-openssl-4.0-benchmarks"
     env:
       DOTNET_TARGET_FRAMEWORK: net10.0
+      BENCHMARK_OPENSSL_VERSION: ${{ matrix.version }}
+      BENCHMARK_RUNTIME_CHANNEL: ga
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Go for report generation
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache: true
+          cache-dependency-path: go/go.mod
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6.0.0
         with:
           dotnet-version: 10.0.x
           dotnet-quality: ga
 
       - name: Restore OpenSSL ${{ matrix.label }} cache
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: ${{ runner.temp }}/openssl-${{ matrix.label }}
           key: openssl-${{ runner.os }}-${{ runner.arch }}-${{ matrix.version }}-${{ hashFiles('.devcontainer/install-openssl.sh') }}
@@ -54,7 +64,7 @@ jobs:
 
       - name: Upload benchmark reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ matrix.artifact }}
           path: dotnet/artifacts/

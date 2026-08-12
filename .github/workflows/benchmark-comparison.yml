@@ -1,0 +1,180 @@
+name: Cross-Language Benchmark Comparison
+
+on:
+  push:
+    paths:
+      - "go/**"
+      - "dotnet/**"
+      - ".devcontainer/install-openssl.sh"
+      - ".github/workflows/benchmark-comparison.yml"
+  pull_request:
+    paths:
+      - "go/**"
+      - "dotnet/**"
+      - ".devcontainer/install-openssl.sh"
+      - ".github/workflows/benchmark-comparison.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go latest stable
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version: stable
+          check-latest: true
+          cache: true
+          cache-dependency-path: go/go.mod
+
+      - name: Run Go tests and benchmarks
+        run: |
+          go test ./...
+          started_ns=$(date +%s%N)
+          go test -bench . -benchmem -benchtime=100x ./... | tee benchmark-results.txt
+          finished_ns=$(date +%s%N)
+          run_elapsed_ms=$(awk "BEGIN { printf \"%.3f\", ($finished_ns - $started_ns) / 1000000 }")
+          go run ./cmd/benchmarkcompare go \
+            --input benchmark-results.txt \
+            --output benchmark-record.json \
+            --runtime "$(go version | awk '{ print $3 }')" \
+            --run-elapsed-ms "$run_elapsed_ms"
+
+      - name: Upload Go comparison input
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: comparison-go
+          path: |
+            go/benchmark-results.txt
+            go/benchmark-record.json
+          if-no-files-found: error
+
+  dotnet:
+    name: ${{ matrix.runtime_label }} / OpenSSL ${{ matrix.openssl_label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime_label: ".NET 10"
+            framework: net10.0
+            dotnet_version: 10.0.x
+            dotnet_quality: ga
+            runtime_channel: ga
+            openssl_label: "3.5"
+            openssl_version: 3.5.0
+            artifact: comparison-dotnet-10-openssl-3.5
+          - runtime_label: ".NET 10"
+            framework: net10.0
+            dotnet_version: 10.0.x
+            dotnet_quality: ga
+            runtime_channel: ga
+            openssl_label: "4.0"
+            openssl_version: 4.0.0
+            artifact: comparison-dotnet-10-openssl-4.0
+          - runtime_label: ".NET 11 preview"
+            framework: net11.0
+            dotnet_version: 11.0.x
+            dotnet_quality: preview
+            runtime_channel: preview
+            openssl_label: "3.5"
+            openssl_version: 3.5.0
+            artifact: comparison-dotnet-11-preview-openssl-3.5
+          - runtime_label: ".NET 11 preview"
+            framework: net11.0
+            dotnet_version: 11.0.x
+            dotnet_quality: preview
+            runtime_channel: preview
+            openssl_label: "4.0"
+            openssl_version: 4.0.0
+            artifact: comparison-dotnet-11-preview-openssl-4.0
+    env:
+      DOTNET_TARGET_FRAMEWORK: ${{ matrix.framework }}
+      BENCHMARK_OPENSSL_VERSION: ${{ matrix.openssl_version }}
+      BENCHMARK_RUNTIME_CHANNEL: ${{ matrix.runtime_channel }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Go for report generation
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache: true
+          cache-dependency-path: go/go.mod
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: ${{ matrix.dotnet_version }}
+          dotnet-quality: ${{ matrix.dotnet_quality }}
+
+      - name: Restore OpenSSL ${{ matrix.openssl_label }} cache
+        uses: actions/cache@v6.1.0
+        with:
+          path: ${{ runner.temp }}/openssl-${{ matrix.openssl_label }}
+          key: openssl-${{ runner.os }}-${{ runner.arch }}-${{ matrix.openssl_version }}-${{ hashFiles('.devcontainer/install-openssl.sh') }}
+
+      - name: Install OpenSSL ${{ matrix.openssl_version }} when absent
+        env:
+          OPENSSL_INSTALL_PREFIX: ${{ runner.temp }}/openssl-${{ matrix.openssl_label }}
+        run: bash .devcontainer/install-openssl.sh "${{ matrix.openssl_version }}"
+
+      - name: Run .NET benchmarks
+        run: bash dotnet/run-benchmarks.sh
+
+      - name: Upload .NET comparison input
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: dotnet/artifacts/
+          if-no-files-found: error
+
+  aggregate:
+    name: Publish comparison report
+    needs:
+      - go
+      - dotnet
+    if: ${{ always() && needs.go.result == 'success' && needs.dotnet.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache: true
+          cache-dependency-path: go/go.mod
+
+      - name: Download same-run comparison inputs
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: comparison-*
+          path: comparison-inputs
+
+      - name: Build JSON and Markdown comparison
+        run: |
+          go run ./go/cmd/benchmarkcompare merge \
+            --input-dir comparison-inputs \
+            --output-dir comparison \
+            --require-complete
+
+      - name: Upload comparison report
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: comparison-report
+          path: comparison/
+          if-no-files-found: error
