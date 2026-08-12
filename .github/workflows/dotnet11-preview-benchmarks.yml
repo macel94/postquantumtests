@@ -1,0 +1,59 @@
+name: .NET 11 Preview Benchmarks
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmarks:
+    name: .NET 11 preview / OpenSSL ${{ matrix.label }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: "3.5"
+            version: "3.5.0"
+            artifact: "dotnet-11-preview-openssl-3.5-benchmarks"
+          - label: "4.0"
+            version: "4.0.0"
+            artifact: "dotnet-11-preview-openssl-4.0-benchmarks"
+    env:
+      DOTNET_TARGET_FRAMEWORK: net11.0
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 11 preview
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 11.0.x
+          dotnet-quality: preview
+
+      - name: Restore OpenSSL ${{ matrix.label }} cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/openssl-${{ matrix.label }}
+          key: openssl-${{ runner.os }}-${{ runner.arch }}-${{ matrix.version }}-${{ hashFiles('.devcontainer/install-openssl.sh') }}
+
+      - name: Install OpenSSL ${{ matrix.version }} when absent
+        env:
+          OPENSSL_INSTALL_PREFIX: ${{ runner.temp }}/openssl-${{ matrix.label }}
+        run: bash .devcontainer/install-openssl.sh "${{ matrix.version }}"
+
+      - name: Run .NET benchmarks
+        run: bash dotnet/run-benchmarks.sh
+
+      - name: Upload benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: dotnet/artifacts/
+          if-no-files-found: warn

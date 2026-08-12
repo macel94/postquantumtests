@@ -1,0 +1,62 @@
+name: Go Tests and Benchmarks
+
+on:
+  push:
+    paths:
+      - "go/**"
+      - ".github/workflows/go-tests-and-benchmarks.yml"
+  pull_request:
+    paths:
+      - "go/**"
+      - ".github/workflows/go-tests-and-benchmarks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Go ${{ matrix.mode }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [test, race]
+    defaults:
+      run:
+        working-directory: go
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache: true
+          cache-dependency-path: go/go.mod
+
+      - name: Run tests
+        if: matrix.mode == 'test'
+        run: go test ./...
+
+      - name: Run race detector
+        if: matrix.mode == 'race'
+        run: go test -race ./...
+
+      - name: Run vet
+        if: matrix.mode == 'test'
+        run: go vet ./...
+
+      - name: Run benchmarks
+        if: matrix.mode == 'test'
+        run: go test -bench . -benchmem -benchtime=100x ./... | tee benchmark-results.txt
+
+      - name: Upload benchmark results
+        if: always() && matrix.mode == 'test'
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-benchmark-results
+          path: go/benchmark-results.txt
+          if-no-files-found: warn

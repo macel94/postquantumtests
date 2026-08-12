@@ -1,9 +1,9 @@
 {
-  "name": "postquantumtests (Go + .NET 10)",
+  "name": "postquantumtests (.NET 11 preview / OpenSSL 4.0)",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "features": {
     "ghcr.io/devcontainers/features/dotnet:2": {
-      "version": "10.0"
+      "version": "11.0-preview"
     },
     "ghcr.io/devcontainers/features/go:1": {
       "version": "1.26"
@@ -14,9 +14,12 @@
     }
   },
   "containerEnv": {
-    "DOTNET_TARGET_FRAMEWORK": "net10.0"
+    "DOTNET_TARGET_FRAMEWORK": "net11.0"
   },
-  "postCreateCommand": "dotnet restore dotnet/raw-kem/postquantumdotnettest.csproj -p:TargetFramework=net10.0 && dotnet restore dotnet/tls/TlsE2eBenchmark.csproj -p:TargetFramework=net10.0 && cd go && go test ./...",
+  "mounts": [
+    "type=volume,source=postquantumtests-openssl-40,target=/usr/local/openssl-4.0"
+  ],
+  "postCreateCommand": "bash .devcontainer/install-openssl.sh 4.0.0 && dotnet restore dotnet/raw-kem/postquantumdotnettest.csproj -p:TargetFramework=net11.0 && dotnet restore dotnet/tls/TlsE2eBenchmark.csproj -p:TargetFramework=net11.0 && cd go && go test ./...",
   "customizations": {
     "vscode": {
       "extensions": [

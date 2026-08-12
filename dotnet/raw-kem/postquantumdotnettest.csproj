@@ -7,8 +7,4 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Compile Remove="TlsE2eBenchmark/**/*.cs" />
-  </ItemGroup>
-
 </Project>

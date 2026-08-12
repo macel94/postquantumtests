@@ -18,12 +18,15 @@ summary_json="$run_dir/summary.json"
 echo "Target framework: $target_framework"
 echo
 
+dotnet restore "$root_dir/raw-kem/postquantumdotnettest.csproj" -p:TargetFramework="$target_framework"
+dotnet restore "$root_dir/tls/TlsE2eBenchmark.csproj" -p:TargetFramework="$target_framework"
+
 echo "Running console benchmark in Release mode..."
-dotnet run -c Release --framework "$target_framework" --project "$root_dir/postquantumdotnettest.csproj" | tee "$console_output"
+dotnet run --no-restore -c Release --framework "$target_framework" --project "$root_dir/raw-kem/postquantumdotnettest.csproj" | tee "$console_output"
 
 echo
 echo "Running TLS benchmark in Release mode..."
-dotnet run -c Release --framework "$target_framework" --project "$root_dir/TlsE2eBenchmark/TlsE2eBenchmark.csproj" -- --scenario all --iterations 100 | tee "$tls_output"
+dotnet run --no-restore -c Release --framework "$target_framework" --project "$root_dir/tls/TlsE2eBenchmark.csproj" -- --scenario all --iterations 100 | tee "$tls_output"
 
 python3 - "$console_output" "$tls_output" "$summary_markdown" "$summary_json" <<'PY'
 import pathlib

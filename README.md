@@ -1,129 +1,135 @@
-# Post Quantum .NET Benchmarks
+# Post-Quantum TLS Benchmarks
 
-This repository contains two console apps:
+This repository compares post-quantum and classical key exchange costs in .NET and Go.
 
-- The root app in [Program.cs](Program.cs) benchmarks raw ML-KEM and classical ECDH operations.
-- The localhost TLS 1.3 app in [TlsE2eBenchmark/Program.cs](TlsE2eBenchmark/Program.cs) benchmarks full client/server handshakes over `SslStream`.
+- [dotnet/raw-kem/Program.cs](dotnet/raw-kem/Program.cs) measures raw ML-KEM-768 and ECDH P-256 round trips.
+- [dotnet/tls/Program.cs](dotnet/tls/Program.cs) measures localhost TLS 1.3 handshakes and an encrypted echo over `SslStream`.
+- [go/raw_test.go](go/raw_test.go) measures the same raw ML-KEM-768 and ECDH P-256 operations with the Go standard library.
+- [go/tls_test.go](go/tls_test.go) measures Go TLS 1.3 with X25519 and hybrid X25519+ML-KEM-768 key exchange.
 
-The default devcontainer matches the .NET 10 / OpenSSL 3.5 CI job. Additional devcontainers under [.devcontainer](.devcontainer) match every CI runtime combination so the benchmark jobs can be reproduced locally.
+## Requirements
 
-## Prerequisites
+- Linux
+- .NET 10 SDK, or the .NET 11 preview SDK for `net11.0` runs
+- Go 1.26 or newer
+- Python 3 for the .NET report-producing runner
+- OpenSSL 3.5.0 or 4.0.0 for the .NET TLS post-quantum scenario
 
-- .NET 10 SDK, or the latest .NET 11 preview SDK for `net11.0` runs
-- OpenSSL 3.5.0 or newer on Linux
-- The devcontainers handle the .NET SDK and OpenSSL dependencies during post-create
+The Go tests use only the standard library. They do not require OpenSSL.
 
-## CI matrix
+## Repository layout
 
-The [OpenSSL benchmark workflow](.github/workflows/openssl-benchmarks.yml) is manual and runs four jobs:
-
-| .NET SDK | Target framework | OpenSSL | Artifact |
-| --- | --- | --- | --- |
-| 10 GA | `net10.0` | 3.5.0 | `dotnet-10-openssl-3.5-benchmarks` |
-| 10 GA | `net10.0` | 4.0.0 | `dotnet-10-openssl-4.0-benchmarks` |
-| 11 latest preview | `net11.0` | 3.5.0 | `dotnet-11-preview-openssl-3.5-benchmarks` |
-| 11 latest preview | `net11.0` | 4.0.0 | `dotnet-11-preview-openssl-4.0-benchmarks` |
-
-The workflow installs .NET with `actions/setup-dotnet`. The .NET 11 rows use `dotnet-version: 11.0.x` with `dotnet-quality: preview`, then set `DOTNET_TARGET_FRAMEWORK=net11.0` before running the benchmarks.
-
-OpenSSL is built from source by [.devcontainer/install-openssl.sh](.devcontainer/install-openssl.sh). The same script is used by CI and the devcontainers to avoid version drift.
-
-## Dependabot
-
-[Dependabot](.github/dependabot.yml) checks weekly for updates to:
-
-- GitHub Actions used by workflows.
-- Devcontainer Features used by the local reproduction containers.
-
-This repository currently has no NuGet package references, so there is no NuGet Dependabot entry yet.
-
-## One-command benchmark run
-
-Run the full benchmark suite with:
-
-```bash
-bash ./run-benchmarks.sh
+```text
+dotnet/
+  raw-kem/             Raw ML-KEM and ECDH executable
+  tls/                 .NET TLS 1.3 benchmark executable
+  run-benchmarks.sh    .NET report-producing runner
+go/
+  raw_test.go          Raw ML-KEM and ECDH tests and benchmarks
+  tls_test.go          TLS 1.3 tests and benchmarks
+.devcontainer/
+  net10-openssl35/     .NET 10 with OpenSSL 3.5
+  net10-openssl40/     .NET 10 with OpenSSL 4.0
+  net11-openssl35/     .NET 11 preview with OpenSSL 3.5
+  net11-openssl40/     .NET 11 preview with OpenSSL 4.0
 ```
 
-By default this runs `net10.0`. To run with the .NET 11 preview SDK, use:
+## Workflows
 
-```bash
-DOTNET_TARGET_FRAMEWORK=net11.0 bash ./run-benchmarks.sh
-```
+The CI surface is split into independent workflows with one purpose each:
 
-That script does all of the following:
-
-- Runs the root console benchmark in Release mode.
-- Runs the localhost TLS benchmark for both classical and post-quantum scenarios in Release mode.
-- Writes the raw outputs and a summary report into `artifacts/`.
-- Prints a grouped console chart so the relative average times are easy to compare.
-
-## Run the console benchmark directly
-
-```bash
-dotnet run -c Release --framework net10.0
-```
-
-For .NET 11 preview, replace `net10.0` with `net11.0`.
-
-This measures the raw crypto operations:
-
-- ML-KEM ML-KEM-768
-- ECDH P-256
-
-## Run the TLS benchmark directly
-
-```bash
-dotnet run -c Release --framework net10.0 --project TlsE2eBenchmark -- --scenario all --iterations 100
-```
-
-For .NET 11 preview, replace `net10.0` with `net11.0`.
-
-Useful options:
-
-- `--scenario classical` runs only the classical TLS 1.3 path.
-- `--scenario pq` runs only the post-quantum TLS 1.3 path.
-- `--scenario all` runs both.
-- `--iterations N` changes the measured handshake count.
-- `--warmup N` changes the warmup count.
-- `--payload-bytes N` changes the echo payload size.
-
-The TLS benchmark reports:
-
-- TLS version
-- Cipher suite
-- Server certificate algorithm
-- Configured key exchange group
-
-The cipher suite is expected to be the same for both runs in this repo, most often `TLS_AES_256_GCM_SHA384`. In TLS 1.3, that value describes the symmetric record-protection suite, not whether the handshake used classical or post-quantum key exchange. The real comparison points here are the negotiated group and the certificate algorithm.
-
-## Local CI reproduction with devcontainers
-
-Open the repository in one of these devcontainers to reproduce a matching CI job locally:
-
-| Devcontainer | CI job reproduced | Benchmark command |
+| Workflow | Purpose | Trigger |
 | --- | --- | --- |
-| [.devcontainer/devcontainer.json](.devcontainer/devcontainer.json) | .NET 10 / OpenSSL 3.5 | `bash ./run-benchmarks.sh` |
-| [.devcontainer/dotnet10-openssl35/devcontainer.json](.devcontainer/dotnet10-openssl35/devcontainer.json) | .NET 10 / OpenSSL 3.5 | `bash ./run-benchmarks.sh` |
-| [.devcontainer/dotnet10-openssl40/devcontainer.json](.devcontainer/dotnet10-openssl40/devcontainer.json) | .NET 10 / OpenSSL 4.0 | `bash ./run-benchmarks.sh` |
-| [.devcontainer/dotnet11-openssl35/devcontainer.json](.devcontainer/dotnet11-openssl35/devcontainer.json) | .NET 11 preview / OpenSSL 3.5 | `bash ./run-benchmarks.sh` |
-| [.devcontainer/dotnet11-openssl40/devcontainer.json](.devcontainer/dotnet11-openssl40/devcontainer.json) | .NET 11 preview / OpenSSL 4.0 | `bash ./run-benchmarks.sh` |
+| [OpenSSL Toolchain Cache](.github/workflows/openssl-toolchains.yml) | Build and warm the shared OpenSSL 3.5/4.0 caches | Manual or weekly |
+| [.NET 10 Benchmarks](.github/workflows/dotnet10-benchmarks.yml) | Run .NET 10 against OpenSSL 3.5 and 4.0 | Manual or weekly |
+| [.NET 11 Preview Benchmarks](.github/workflows/dotnet11-preview-benchmarks.yml) | Run .NET 11 preview against OpenSSL 3.5 and 4.0 | Manual or weekly |
+| [Go Tests and Benchmarks](.github/workflows/go-tests-and-benchmarks.yml) | Run Go tests, vet, race checks, and benchmarks | Push, pull request, or manual |
 
-Each devcontainer sets `DOTNET_TARGET_FRAMEWORK` to the target framework used by its matching CI job. To switch between containers in VS Code, use `Dev Containers: Reopen in Container` and select the desired configuration. Rebuild the container when you want to pick up newer .NET SDK or devcontainer Feature versions.
+The OpenSSL toolchain workflow builds each version once and stores the installed prefix in the GitHub Actions cache. The .NET workflows use the same versioned cache key. On a cache hit, [install-openssl.sh](.devcontainer/install-openssl.sh) only restores the loader configuration and verifies the exact version instead of compiling OpenSSL again.
 
-## What the numbers mean
+## Run the .NET benchmarks
 
-The console benchmark is a lower-level crypto comparison. It measures key exchange and derived-secret work without socket setup.
+From the repository root:
 
-The TLS benchmark is end to end. It includes localhost networking, `SslStream` handshake setup, certificate validation, and the encrypted echo round trip.
+```bash
+bash dotnet/run-benchmarks.sh
+```
 
-That makes the TLS numbers more representative of a real application, while the console benchmark is still useful for isolating crypto cost.
+The runner defaults to `net10.0`. Select the .NET 11 preview explicitly:
 
-If you see the same cipher suite in both the classical and PQ runs, that is not a sign the benchmark is broken. TLS 1.3 keeps the record-layer cipher suite separate from the handshake key exchange, so both scenarios can legitimately use the same suite while still exercising different handshake groups.
+```bash
+DOTNET_TARGET_FRAMEWORK=net11.0 bash dotnet/run-benchmarks.sh
+```
 
-## Notes
+The runner restores both projects for the selected target framework, runs the raw crypto and TLS benchmarks, and writes reports under `dotnet/artifacts/`.
 
-- On Linux, post-quantum support depends on the native OpenSSL version, not just the .NET SDK.
-- The PQ TLS scenario forces `MLKEM768` through a per-process OpenSSL config file.
-- The project files default to `net10.0` so a .NET 10 SDK can restore and build the repository. CI and the .NET 11 devcontainers select `net11.0` explicitly.
-- The benchmark runner stores generated reports under `artifacts/`, which is ignored by git.
+Run the raw benchmark directly:
+
+```bash
+dotnet run -c Release --framework net10.0 --project dotnet/raw-kem/postquantumdotnettest.csproj
+```
+
+For .NET 11 preview, restore the selected target first and then disable implicit restore:
+
+```bash
+dotnet restore dotnet/raw-kem/postquantumdotnettest.csproj -p:TargetFramework=net11.0
+dotnet run --no-restore -c Release --framework net11.0 --project dotnet/raw-kem/postquantumdotnettest.csproj
+```
+
+Run the TLS benchmark directly:
+
+```bash
+dotnet run -c Release --framework net10.0 --project dotnet/tls/TlsE2eBenchmark.csproj -- --scenario all --iterations 100
+```
+
+Use the same explicit restore pattern for the .NET 11 TLS benchmark:
+
+```bash
+dotnet restore dotnet/tls/TlsE2eBenchmark.csproj -p:TargetFramework=net11.0
+dotnet run --no-restore -c Release --framework net11.0 --project dotnet/tls/TlsE2eBenchmark.csproj -- --scenario all --iterations 100
+```
+
+Available TLS options are `--scenario classical|pq|all`, `--iterations N`, `--warmup N`, and `--payload-bytes N`.
+
+The .NET TLS benchmark reports the TLS version, record-protection cipher suite, certificate algorithm, and negotiated key-exchange group. In TLS 1.3, the cipher suite is independent of the key-exchange group, so the negotiated group is the important classical/PQ comparison.
+
+## Run the Go tests and benchmarks
+
+```bash
+cd go
+go test ./...
+go test -race ./...
+go vet ./...
+go test -bench . -benchmem -benchtime=100x ./...
+```
+
+The raw Go tests use ML-KEM-768 and ECDH P-256. The TLS tests create a local ECDSA P-256 certificate, disable resumption, force TLS 1.3, and assert the negotiated curve and echo payload. The PQ TLS benchmark uses Go's standard-library hybrid `X25519MLKEM768` group.
+
+## Devcontainers
+
+The default [devcontainer.json](.devcontainer/devcontainer.json) provides Go 1.26, .NET 10, and Python 3 without compiling OpenSSL. Use one of the specialized containers when working on the .NET/OpenSSL matrix:
+
+| Devcontainer | Environment |
+| --- | --- |
+| [net10-openssl35](.devcontainer/net10-openssl35/devcontainer.json) | .NET 10 / OpenSSL 3.5 |
+| [net10-openssl40](.devcontainer/net10-openssl40/devcontainer.json) | .NET 10 / OpenSSL 4.0 |
+| [net11-openssl35](.devcontainer/net11-openssl35/devcontainer.json) | .NET 11 preview / OpenSSL 3.5 |
+| [net11-openssl40](.devcontainer/net11-openssl40/devcontainer.json) | .NET 11 preview / OpenSSL 4.0 |
+
+The specialized containers mount a persistent Docker volume for their OpenSSL version. Recreating a container therefore reuses the installed toolchain instead of compiling it again.
+
+To install a version manually:
+
+```bash
+bash .devcontainer/install-openssl.sh 3.5.0
+```
+
+## Interpreting results
+
+The raw benchmarks isolate cryptographic operations. The TLS benchmarks include TCP setup, certificate verification, TLS handshake, encrypted echo, and connection close for each operation.
+
+The .NET and Go raw ML-KEM-768 results are directly comparable at the algorithm level. Their PQ TLS scenarios are related but not identical: .NET uses its OpenSSL-backed ML-KEM-768 and ML-DSA certificate configuration, while Go's standard library currently exposes hybrid X25519+ML-KEM-768 key exchange and uses an ECDSA certificate. Compare each language's classical/PQ delta within its own workflow.
+
+## Dependency updates
+
+[Dependabot](.github/dependabot.yml) checks GitHub Actions and Devcontainer Features weekly. The Go module has no third-party dependencies, and the .NET projects have no NuGet package references.

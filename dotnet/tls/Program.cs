@@ -738,11 +738,11 @@ static int ParsePositiveInt(string value, string argumentName, bool allowZero)
 static void PrintUsage()
 {
     Console.WriteLine("Usage:");
-    Console.WriteLine("  dotnet run --project TlsE2eBenchmark [-- --scenario classical|pq|all] [--iterations N] [--warmup N] [--payload-bytes N]");
+    Console.WriteLine("  dotnet run --project dotnet/tls/TlsE2eBenchmark.csproj [-- --scenario classical|pq|all] [--iterations N] [--warmup N] [--payload-bytes N]");
     Console.WriteLine();
     Console.WriteLine("Examples:");
-    Console.WriteLine("  dotnet run --project TlsE2eBenchmark");
-    Console.WriteLine("  dotnet run --project TlsE2eBenchmark -- --scenario pq --iterations 200 --warmup 10");
+    Console.WriteLine("  dotnet run --project dotnet/tls/TlsE2eBenchmark.csproj");
+    Console.WriteLine("  dotnet run --project dotnet/tls/TlsE2eBenchmark.csproj -- --scenario pq --iterations 200 --warmup 10");
 }
 
 sealed record AppOptions(

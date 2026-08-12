@@ -1,5 +1,5 @@
 {
-  "name": "postquantumtests (Go + .NET 10)",
+  "name": "postquantumtests (.NET 10 / OpenSSL 3.5)",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "features": {
     "ghcr.io/devcontainers/features/dotnet:2": {
@@ -16,7 +16,10 @@
   "containerEnv": {
     "DOTNET_TARGET_FRAMEWORK": "net10.0"
   },
-  "postCreateCommand": "dotnet restore dotnet/raw-kem/postquantumdotnettest.csproj -p:TargetFramework=net10.0 && dotnet restore dotnet/tls/TlsE2eBenchmark.csproj -p:TargetFramework=net10.0 && cd go && go test ./...",
+  "mounts": [
+    "type=volume,source=postquantumtests-openssl-35,target=/usr/local/openssl-3.5"
+  ],
+  "postCreateCommand": "bash .devcontainer/install-openssl.sh 3.5.0 && dotnet restore dotnet/raw-kem/postquantumdotnettest.csproj -p:TargetFramework=net10.0 && dotnet restore dotnet/tls/TlsE2eBenchmark.csproj -p:TargetFramework=net10.0 && cd go && go test ./...",
   "customizations": {
     "vscode": {
       "extensions": [
