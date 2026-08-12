@@ -49,6 +49,17 @@ static async Task<int> RunOrchestratorAsync(AppOptions options)
 {
     List<ScenarioDefinition> scenarios = GetRequestedScenarios(options.Scenario);
 
+    if (scenarios.Any(static scenario => scenario.Name == "pq") && !IsPostQuantumTlsSupported())
+    {
+        if (options.Scenario == "pq")
+        {
+            throw new PlatformNotSupportedException("The post-quantum TLS scenario requires ML-KEM and ML-DSA support.");
+        }
+
+        scenarios.RemoveAll(static scenario => scenario.Name == "pq");
+        Console.WriteLine("Skipping pq scenario: ML-KEM and/or ML-DSA is not supported on this platform.");
+    }
+
     Console.WriteLine("TLS 1.3 localhost benchmark");
     Console.WriteLine($"Measured iterations: {options.Iterations}");
     Console.WriteLine($"Warmup iterations: {options.WarmupIterations}");
@@ -73,6 +84,8 @@ static async Task<int> RunOrchestratorAsync(AppOptions options)
 
     return 0;
 }
+
+static bool IsPostQuantumTlsSupported() => MLKem.IsSupported && MLDsa.IsSupported;
 
 static async Task<ClientBenchmarkResult> RunScenarioAsync(ScenarioDefinition scenario, AppOptions options)
 {

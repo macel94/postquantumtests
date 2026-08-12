@@ -167,9 +167,10 @@ jobs:
 
       - name: Build JSON and Markdown comparison
         run: |
-          go run ./go/cmd/benchmarkcompare merge \
-            --input-dir comparison-inputs \
-            --output-dir comparison \
+          cd go
+          go run ./cmd/benchmarkcompare merge \
+            --input-dir ../comparison-inputs \
+            --output-dir ../comparison \
             --require-complete
 
       - name: Upload comparison report

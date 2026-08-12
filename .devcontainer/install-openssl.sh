@@ -20,7 +20,10 @@ source_archive="openssl-${source_version}.tar.gz"
 build_root="/tmp/openssl-${source_version}-build"
 
 if [[ -x "${install_prefix}/bin/openssl" ]]; then
-  installed_version="$(${install_prefix}/bin/openssl version | awk '{print $2}')"
+  installed_version="$(
+    LD_LIBRARY_PATH="${install_prefix}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+      "${install_prefix}/bin/openssl" version | awk '{print $2}'
+  )"
   if [[ "$installed_version" == "$source_version" ]]; then
     echo "OpenSSL ${installed_version} is already installed at ${install_prefix}."
     sudo sh -c "printf '%s\n' '${install_prefix}/lib' > '/etc/ld.so.conf.d/openssl-${version_branch}.conf'"

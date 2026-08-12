@@ -188,9 +188,34 @@ func runDotnet(args []string) error {
 	if err != nil {
 		return err
 	}
-	pq, err := parseTLSScenario(tlsText, "pq")
+	pq, err := parseOptionalTLSScenario(tlsText, "pq")
 	if err != nil {
 		return err
+	}
+	tlsPQSupported := pq != nil && strings.Contains(pq.KeyExchangeGroup, "MLKEM768")
+	pqCertificateSupported := pq != nil && strings.HasPrefix(pq.CertificateAlgorithm, "ML-DSA")
+
+	tlsDetails := map[string]interface{}{
+		"classical_ms_per_handshake":      classical.AverageMS,
+		"classical_cipher_suite":          classical.CipherSuite,
+		"classical_key_exchange_group":    classical.KeyExchangeGroup,
+		"classical_certificate_algorithm": classical.CertificateAlgorithm,
+	}
+	tlsPQResult := result{Status: status(pq != nil)}
+	if pq != nil {
+		tlsDetails["post_quantum_ms_per_handshake"] = pq.AverageMS
+		tlsDetails["post_quantum_cipher_suite"] = pq.CipherSuite
+		tlsDetails["post_quantum_key_exchange_group"] = pq.KeyExchangeGroup
+		tlsDetails["post_quantum_certificate_algorithm"] = pq.CertificateAlgorithm
+		tlsPQResult = result{
+			AverageMS:            &pq.AverageMS,
+			Iterations:           pq.Iterations,
+			Status:               "pass",
+			Protocol:             pq.Protocol,
+			CipherSuite:          pq.CipherSuite,
+			KeyExchangeGroup:     pq.KeyExchangeGroup,
+			CertificateAlgorithm: pq.CertificateAlgorithm,
+		}
 	}
 
 	var openssl *string
@@ -212,8 +237,8 @@ func runDotnet(args []string) error {
 		RunElapsedMS:   elapsedMS,
 		PostQuantumSupport: support{
 			RawMLKEM768:       mlkemSupported,
-			TLSX25519MLKEM768: strings.Contains(pq.KeyExchangeGroup, "MLKEM768"),
-			PQCertificate:     strings.HasPrefix(pq.CertificateAlgorithm, "ML-DSA"),
+				TLSX25519MLKEM768: tlsPQSupported,
+				PQCertificate:     pqCertificateSupported,
 		},
 		NegotiationEvidence: map[string]string{
 			"tls_key_exchange_group_source": "restricted OpenSSL configuration via OPENSSL_CONF; SslStream does not expose the named group directly",
@@ -222,16 +247,7 @@ func runDotnet(args []string) error {
 			"mlkem768_ms_per_round_trip":  mlkemMS,
 			"ecdh_p256_ms_per_round_trip": ecdhMS,
 		},
-		TLS: map[string]interface{}{
-			"classical_ms_per_handshake":         classical.AverageMS,
-			"post_quantum_ms_per_handshake":      pq.AverageMS,
-			"classical_cipher_suite":             classical.CipherSuite,
-			"post_quantum_cipher_suite":          pq.CipherSuite,
-			"classical_key_exchange_group":       classical.KeyExchangeGroup,
-			"post_quantum_key_exchange_group":    pq.KeyExchangeGroup,
-			"classical_certificate_algorithm":    classical.CertificateAlgorithm,
-			"post_quantum_certificate_algorithm": pq.CertificateAlgorithm,
-		},
+		TLS: tlsDetails,
 		Results: map[string]result{
 			"raw_mlkem768":  {AverageMS: mlkemMS, Iterations: 100, Status: status(mlkemSupported)},
 			"raw_ecdh_p256": {AverageMS: &ecdhMS, Iterations: 100, Status: "pass"},
@@ -239,16 +255,24 @@ func runDotnet(args []string) error {
 				AverageMS: &classical.AverageMS, Iterations: classical.Iterations, Status: "pass",
 				Protocol: classical.Protocol, CipherSuite: classical.CipherSuite, KeyExchangeGroup: classical.KeyExchangeGroup, CertificateAlgorithm: classical.CertificateAlgorithm,
 			},
-			"tls_post_quantum": {
-				AverageMS: &pq.AverageMS, Iterations: pq.Iterations, Status: "pass",
-				Protocol: pq.Protocol, CipherSuite: pq.CipherSuite, KeyExchangeGroup: pq.KeyExchangeGroup, CertificateAlgorithm: pq.CertificateAlgorithm,
-			},
+			"tls_post_quantum": tlsPQResult,
 		},
 	}
 	if err := writeJSON(*jsonPath, recordValue); err != nil {
 		return err
 	}
 	return writeDotnetMarkdown(*markdownPath, recordValue)
+}
+
+func parseOptionalTLSScenario(text, scenario string) (*tlsMeasurement, error) {
+	if !strings.Contains(text, "Running "+scenario+" scenario...") {
+		return nil, nil
+	}
+	measurement, err := parseTLSScenario(text, scenario)
+	if err != nil {
+		return nil, err
+	}
+	return &measurement, nil
 }
 
 type tlsMeasurement struct {
