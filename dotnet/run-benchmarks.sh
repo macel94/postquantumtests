@@ -25,6 +25,8 @@ echo "Target framework: $target_framework"
 echo "Benchmark samples: $benchmark_repetitions"
 echo
 
+started_ns=$(date +%s%N)
+
 dotnet restore "$root_dir/raw-kem/postquantumdotnettest.csproj" -p:TargetFramework="$target_framework"
 dotnet restore "$root_dir/tls/TlsE2eBenchmark.csproj" -p:TargetFramework="$target_framework"
 dotnet build --no-restore -c Release --framework "$target_framework" "$root_dir/raw-kem/postquantumdotnettest.csproj"
@@ -42,6 +44,8 @@ for ((sample_index = 1; sample_index <= benchmark_repetitions; sample_index++));
   dotnet run --no-build -c Release --framework "$target_framework" --project "$root_dir/tls/TlsE2eBenchmark.csproj" -- --scenario all --iterations 100 | tee -a "$tls_output"
 done
 
+finished_ns=$(date +%s%N)
+
 go_tool_dir="$root_dir/../go"
 (
   cd "$go_tool_dir"
@@ -52,7 +56,9 @@ go_tool_dir="$root_dir/../go"
     --json "$summary_json" \
     --runtime "$target_framework" \
     --runtime-channel "${BENCHMARK_RUNTIME_CHANNEL:-unknown}" \
-    --openssl-version "${BENCHMARK_OPENSSL_VERSION:-}"
+    --openssl-version "${BENCHMARK_OPENSSL_VERSION:-}" \
+    --started-ns "$started_ns" \
+    --finished-ns "$finished_ns"
 )
 
 echo
