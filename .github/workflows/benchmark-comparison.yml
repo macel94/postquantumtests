@@ -41,16 +41,8 @@ jobs:
 
       - name: Run Go tests and benchmarks
         run: |
-          started_ns=$(date +%s%N)
           go test ./...
-          go test -bench . -benchmem -benchtime=100x -count="$BENCHMARK_REPETITIONS" ./... | tee benchmark-results.txt
-          finished_ns=$(date +%s%N)
-          run_elapsed_ms=$(awk "BEGIN { printf \"%.3f\", ($finished_ns - $started_ns) / 1000000 }")
-          go run ./cmd/benchmarkcompare go \
-            --input benchmark-results.txt \
-            --output benchmark-record.json \
-            --runtime "$(go version | awk '{ print $3 }')" \
-            --run-elapsed-ms "$run_elapsed_ms"
+          bash run-benchmarks.sh
 
       - name: Upload Go comparison input
         uses: actions/upload-artifact@v7.0.1

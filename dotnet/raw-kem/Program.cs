@@ -4,7 +4,7 @@ using System.Diagnostics;
 bool mlkemSupported = MLKem.IsSupported;
 Console.WriteLine($"ML-KEM MLKEM-768 support: {(mlkemSupported ? "supported" : "unsupported")}");
 
-const int iterations = 100;
+int iterations = ParseIterations(args);
 
 if (mlkemSupported)
 {
@@ -65,3 +65,18 @@ for (int i = 0; i < iterations; i++)
 
 ecdhStopwatch.Stop();
 Console.WriteLine($"ECDH P-256 benchmark: {ecdhMatches}/{iterations} successful round-trips in {ecdhStopwatch.Elapsed.TotalMilliseconds:N2} ms");
+
+static int ParseIterations(string[] args)
+{
+    for (int index = 0; index < args.Length; index++)
+    {
+        if (args[index] != "--iterations" || index + 1 >= args.Length || !int.TryParse(args[index + 1], out int iterations) || iterations <= 0)
+        {
+            continue;
+        }
+
+        return iterations;
+    }
+
+    return 100;
+}

@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 var goBenchmarks = map[string]string{
 	"BenchmarkMLKEM768RoundTrip":       "raw_mlkem768",
@@ -55,7 +55,9 @@ type record struct {
 	OpenSSLVersion      *string                `json:"openssl_version"`
 	OpenSSLBackend      string                 `json:"openssl_backend"`
 	OpenSSLLibrary      string                 `json:"openssl_library,omitempty"`
-	RunElapsedMS        float64                `json:"run_elapsed_ms,omitempty"`
+	BenchmarkElapsedMS  float64                `json:"benchmark_elapsed_ms,omitempty"`
+	CleanBuildMS        float64                `json:"clean_build_ms,omitempty"`
+	CachedBuildMS       float64                `json:"cached_build_ms,omitempty"`
 	PostQuantumSupport  support                `json:"post_quantum_support"`
 	NegotiationEvidence map[string]string      `json:"negotiation_evidence,omitempty"`
 	Console             map[string]interface{} `json:"console,omitempty"`
@@ -64,8 +66,8 @@ type record struct {
 }
 
 type benchmarkMeasurement struct {
-	Iterations  int
-	Nanoseconds float64
+	Iterations         int
+	SamplesNanoseconds []float64
 }
 
 var goBenchmarkPattern = regexp.MustCompile(`^(Benchmark[A-Za-z0-9]+)(-[0-9]+)?[[:space:]]+([0-9]+)[[:space:]]+([0-9]+(\.[0-9]+)?)[[:space:]]+ns/op([[:space:]]|$)`)
@@ -103,7 +105,9 @@ func runGo(args []string) error {
 	input := flags.String("input", "", "Go benchmark output")
 	output := flags.String("output", "", "comparison record output")
 	runtime := flags.String("runtime", "", "Go runtime version")
-	runElapsedMS := flags.Float64("run-elapsed-ms", 0, "whole benchmark command duration")
+	benchmarkElapsedMS := flags.Float64("benchmark-elapsed-ms", 0, "prebuilt benchmark execution duration")
+	cleanBuildMS := flags.Float64("clean-build-ms", 0, "clean build duration for both benchmark targets")
+	cachedBuildMS := flags.Float64("cached-build-ms", 0, "cached build duration for both benchmark targets")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -115,19 +119,42 @@ func runGo(args []string) error {
 	if err != nil {
 		return err
 	}
-	average := func(name string) *float64 {
-		value := measurements[name].Nanoseconds / 1_000_000
-		return &value
+	benchmarkResult := func(name string) (result, error) {
+		measurement := measurements[name]
+		samples := make([]float64, len(measurement.SamplesNanoseconds))
+		for index, nanoseconds := range measurement.SamplesNanoseconds {
+			samples[index] = nanoseconds / 1_000_000
+		}
+		return resultFromSamples(samples, measurement.Iterations, "pass")
 	}
+	results := make(map[string]result, len(measurements))
+	for _, name := range goBenchmarks {
+		results[name], err = benchmarkResult(name)
+		if err != nil {
+			return err
+		}
+	}
+	classicalResult := results["tls_classical"]
+	classicalResult.Protocol = "TLS 1.3"
+	classicalResult.KeyExchangeGroup = "X25519"
+	classicalResult.CertificateAlgorithm = "ECDSA P-256"
+	results["tls_classical"] = classicalResult
+	pqResult := results["tls_post_quantum"]
+	pqResult.Protocol = "TLS 1.3"
+	pqResult.KeyExchangeGroup = "X25519MLKEM768"
+	pqResult.CertificateAlgorithm = "ECDSA P-256"
+	results["tls_post_quantum"] = pqResult
 	recordValue := record{
-		SchemaVersion:  schemaVersion,
-		GeneratedAtUTC: nowUTC(),
-		Implementation: "go",
-		Runtime:        *runtime,
-		RuntimeChannel: "latest-stable",
-		OpenSSLVersion: nil,
-		OpenSSLBackend: "standard-library",
-		RunElapsedMS:   *runElapsedMS,
+		SchemaVersion:      schemaVersion,
+		GeneratedAtUTC:     nowUTC(),
+		Implementation:     "go",
+		Runtime:            *runtime,
+		RuntimeChannel:     "latest-stable",
+		OpenSSLVersion:     nil,
+		OpenSSLBackend:     "standard-library",
+		BenchmarkElapsedMS: *benchmarkElapsedMS,
+		CleanBuildMS:       *cleanBuildMS,
+		CachedBuildMS:      *cachedBuildMS,
 		PostQuantumSupport: support{
 			RawMLKEM768:       true,
 			TLSX25519MLKEM768: true,
@@ -135,18 +162,7 @@ func runGo(args []string) error {
 		NegotiationEvidence: map[string]string{
 			"tls_key_exchange_group_source": "tls.ConnectionState.CurveID",
 		},
-		Results: map[string]result{
-			"raw_mlkem768":  {AverageMS: average("raw_mlkem768"), Iterations: measurements["raw_mlkem768"].Iterations, Status: "pass"},
-			"raw_ecdh_p256": {AverageMS: average("raw_ecdh_p256"), Iterations: measurements["raw_ecdh_p256"].Iterations, Status: "pass"},
-			"tls_classical": {
-				AverageMS: average("tls_classical"), Iterations: measurements["tls_classical"].Iterations, Status: "pass",
-				Protocol: "TLS 1.3", KeyExchangeGroup: "X25519", CertificateAlgorithm: "ECDSA P-256",
-			},
-			"tls_post_quantum": {
-				AverageMS: average("tls_post_quantum"), Iterations: measurements["tls_post_quantum"].Iterations, Status: "pass",
-				Protocol: "TLS 1.3", KeyExchangeGroup: "X25519MLKEM768", CertificateAlgorithm: "ECDSA P-256",
-			},
-		},
+		Results: results,
 	}
 	return writeJSON(*output, recordValue)
 }
@@ -160,8 +176,9 @@ func runDotnet(args []string) error {
 	runtime := flags.String("runtime", "", ".NET target framework")
 	runtimeChannel := flags.String("runtime-channel", "unknown", ".NET release channel")
 	opensslVersion := flags.String("openssl-version", "", "OpenSSL version")
-	startedNS := flags.Int64("started-ns", 0, "benchmark start timestamp")
-	finishedNS := flags.Int64("finished-ns", 0, "benchmark finish timestamp")
+	benchmarkElapsedMS := flags.Float64("benchmark-elapsed-ms", 0, "prebuilt benchmark execution duration")
+	cleanBuildMS := flags.Float64("clean-build-ms", 0, "clean build duration for both benchmark targets")
+	cachedBuildMS := flags.Float64("cached-build-ms", 0, "cached build duration for both benchmark targets")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -182,15 +199,22 @@ func runDotnet(args []string) error {
 		return errors.New("could not find ML-KEM support in .NET output")
 	}
 	mlkemSupported := mlkemMatch[1] == "supported"
-	var mlkemMS *float64
+	mlkemResult := result{Status: status(mlkemSupported)}
 	if mlkemSupported {
-		value, err := parseRoundTrip(consoleText, `ML-KEM ML-KEM-768 benchmark:`)
+		samples, iterations, err := parseRoundTrip(consoleText, `ML-KEM ML-KEM-768 benchmark:`)
 		if err != nil {
 			return err
 		}
-		mlkemMS = &value
+		mlkemResult, err = resultFromSamples(samples, iterations, "pass")
+		if err != nil {
+			return err
+		}
 	}
-	ecdhMS, err := parseRoundTrip(consoleText, `ECDH P-256 benchmark:`)
+	ecdhSamples, ecdhIterations, err := parseRoundTrip(consoleText, `ECDH P-256 benchmark:`)
+	if err != nil {
+		return err
+	}
+	ecdhResult, err := resultFromSamples(ecdhSamples, ecdhIterations, "pass")
 	if err != nil {
 		return err
 	}
@@ -208,45 +232,42 @@ func runDotnet(args []string) error {
 	tlsPQSupported := pq != nil && strings.HasPrefix(pq.KeyExchangeGroup, "X25519MLKEM768")
 
 	tlsDetails := map[string]interface{}{
-		"classical_ms_per_handshake":      classical.AverageMS,
+		"classical_ms_per_handshake":      classical.MedianMS,
 		"classical_cipher_suite":          classical.CipherSuite,
 		"classical_key_exchange_group":    classical.KeyExchangeGroup,
 		"classical_certificate_algorithm": classical.CertificateAlgorithm,
 	}
 	tlsPQResult := result{Status: status(pq != nil)}
 	if pq != nil {
-		tlsDetails["post_quantum_ms_per_handshake"] = pq.AverageMS
+		tlsDetails["post_quantum_ms_per_handshake"] = pq.MedianMS
 		tlsDetails["post_quantum_cipher_suite"] = pq.CipherSuite
 		tlsDetails["post_quantum_key_exchange_group"] = pq.KeyExchangeGroup
 		tlsDetails["post_quantum_certificate_algorithm"] = pq.CertificateAlgorithm
-		tlsPQResult = result{
-			AverageMS:            &pq.AverageMS,
-			Iterations:           pq.Iterations,
-			Status:               "pass",
-			Protocol:             pq.Protocol,
-			CipherSuite:          pq.CipherSuite,
-			KeyExchangeGroup:     pq.KeyExchangeGroup,
-			CertificateAlgorithm: pq.CertificateAlgorithm,
+		tlsPQResult, err = resultFromSamples(pq.SamplesMS, pq.Iterations, "pass")
+		if err != nil {
+			return err
 		}
+		tlsPQResult.Protocol = pq.Protocol
+		tlsPQResult.CipherSuite = pq.CipherSuite
+		tlsPQResult.KeyExchangeGroup = pq.KeyExchangeGroup
+		tlsPQResult.CertificateAlgorithm = pq.CertificateAlgorithm
 	}
 
 	var openssl *string
 	if *opensslVersion != "" {
 		openssl = opensslVersion
 	}
-	elapsedMS := float64(0)
-	if *startedNS != 0 && *finishedNS >= *startedNS {
-		elapsedMS = float64(*finishedNS-*startedNS) / 1_000_000
-	}
 	recordValue := record{
-		SchemaVersion:  schemaVersion,
-		GeneratedAtUTC: nowUTC(),
-		Implementation: "dotnet",
-		Runtime:        *runtime,
-		RuntimeChannel: *runtimeChannel,
-		OpenSSLVersion: openssl,
-		OpenSSLBackend: "system-openssl",
-		RunElapsedMS:   elapsedMS,
+		SchemaVersion:      schemaVersion,
+		GeneratedAtUTC:     nowUTC(),
+		Implementation:     "dotnet",
+		Runtime:            *runtime,
+		RuntimeChannel:     *runtimeChannel,
+		OpenSSLVersion:     openssl,
+		OpenSSLBackend:     "system-openssl",
+		BenchmarkElapsedMS: *benchmarkElapsedMS,
+		CleanBuildMS:       *cleanBuildMS,
+		CachedBuildMS:      *cachedBuildMS,
 		PostQuantumSupport: support{
 			RawMLKEM768:       mlkemSupported,
 			TLSX25519MLKEM768: tlsPQSupported,
@@ -255,15 +276,15 @@ func runDotnet(args []string) error {
 			"tls_key_exchange_group_source": "OpenSSL TLS-group preflight plus a single-group OPENSSL_CONF restriction; SslStream does not expose the named group directly",
 		},
 		Console: map[string]interface{}{
-			"mlkem768_ms_per_round_trip":  mlkemMS,
-			"ecdh_p256_ms_per_round_trip": ecdhMS,
+			"mlkem768_ms_per_round_trip":  mlkemResult.MedianMS,
+			"ecdh_p256_ms_per_round_trip": ecdhResult.MedianMS,
 		},
 		TLS: tlsDetails,
 		Results: map[string]result{
-			"raw_mlkem768":  {AverageMS: mlkemMS, Iterations: 100, Status: status(mlkemSupported)},
-			"raw_ecdh_p256": {AverageMS: &ecdhMS, Iterations: 100, Status: "pass"},
+			"raw_mlkem768":  mlkemResult,
+			"raw_ecdh_p256": ecdhResult,
 			"tls_classical": {
-				AverageMS: &classical.AverageMS, Iterations: classical.Iterations, Status: "pass",
+				MedianMS: &classical.MedianMS, SamplesMS: classical.SamplesMS, SampleCount: len(classical.SamplesMS), RelativeStdDevPercent: classical.RelativeStdDevPercent, Iterations: classical.Iterations, Status: "pass",
 				Protocol: classical.Protocol, CipherSuite: classical.CipherSuite, KeyExchangeGroup: classical.KeyExchangeGroup, CertificateAlgorithm: classical.CertificateAlgorithm,
 			},
 			"tls_post_quantum": tlsPQResult,
@@ -287,47 +308,81 @@ func parseOptionalTLSScenario(text, scenario string) (*tlsMeasurement, error) {
 }
 
 type tlsMeasurement struct {
-	AverageMS            float64
-	Iterations           int
-	Protocol             string
-	CipherSuite          string
-	KeyExchangeGroup     string
-	CertificateAlgorithm string
+	MedianMS              float64
+	SamplesMS             []float64
+	RelativeStdDevPercent *float64
+	Iterations            int
+	Protocol              string
+	CipherSuite           string
+	KeyExchangeGroup      string
+	CertificateAlgorithm  string
 }
 
 func parseTLSScenario(text, scenario string) (tlsMeasurement, error) {
-	startMarker := "Running " + scenario + " scenario..."
-	start := strings.Index(text, startMarker)
-	if start < 0 {
+	sections := tlsScenarioSections(text, scenario)
+	if len(sections) == 0 {
 		return tlsMeasurement{}, fmt.Errorf("could not find TLS %s scenario", scenario)
 	}
-	section := text[start:]
-	if next := strings.Index(section[len(startMarker):], "\nRunning "); next >= 0 {
-		section = section[:len(startMarker)+next]
-	}
-	average, err := captureFloat(averagePattern, section, "TLS "+scenario+" average")
-	if err != nil {
-		return tlsMeasurement{}, err
-	}
-	iterations, err := captureInt(regexp.MustCompile(`(\d+) handshakes in`), section, "TLS "+scenario+" iterations")
-	if err != nil {
-		return tlsMeasurement{}, err
-	}
-	values := map[string]string{}
-	for _, match := range lineValuePattern.FindAllStringSubmatch(section, -1) {
-		values[match[1]] = strings.TrimSpace(match[2])
-	}
-	for _, key := range []string{"Protocol", "Cipher suite", "TLS key exchange group", "Server certificate"} {
-		if values[key] == "" {
-			return tlsMeasurement{}, fmt.Errorf("could not find %s in TLS %s scenario", key, scenario)
+	var samples []float64
+	var measurement tlsMeasurement
+	for index, section := range sections {
+		average, err := captureFloat(averagePattern, section, "TLS "+scenario+" average")
+		if err != nil {
+			return tlsMeasurement{}, err
 		}
+		iterations, err := captureInt(regexp.MustCompile(`(\d+) handshakes in`), section, "TLS "+scenario+" iterations")
+		if err != nil {
+			return tlsMeasurement{}, err
+		}
+		values := map[string]string{}
+		for _, match := range lineValuePattern.FindAllStringSubmatch(section, -1) {
+			values[match[1]] = strings.TrimSpace(match[2])
+		}
+		for _, key := range []string{"Protocol", "Cipher suite", "TLS key exchange group", "Server certificate"} {
+			if values[key] == "" {
+				return tlsMeasurement{}, fmt.Errorf("could not find %s in TLS %s scenario", key, scenario)
+			}
+		}
+		current := tlsMeasurement{
+			Iterations: iterations, Protocol: normalizeTLSProtocol(values["Protocol"]),
+			CipherSuite: values["Cipher suite"], KeyExchangeGroup: normalizeTLSGroup(values["TLS key exchange group"]),
+			CertificateAlgorithm: normalizeCertificateAlgorithm(values["Server certificate"]),
+		}
+		if index == 0 {
+			measurement = current
+		} else if current.Iterations != measurement.Iterations || current.Protocol != measurement.Protocol || current.CipherSuite != measurement.CipherSuite || current.KeyExchangeGroup != measurement.KeyExchangeGroup || current.CertificateAlgorithm != measurement.CertificateAlgorithm {
+			return tlsMeasurement{}, fmt.Errorf("TLS %s samples reported inconsistent metadata", scenario)
+		}
+		samples = append(samples, average)
 	}
-	return tlsMeasurement{
-		AverageMS: average, Iterations: iterations, Protocol: normalizeTLSProtocol(values["Protocol"]),
-		CipherSuite:          values["Cipher suite"],
-		KeyExchangeGroup:     normalizeTLSGroup(values["TLS key exchange group"]),
-		CertificateAlgorithm: normalizeCertificateAlgorithm(values["Server certificate"]),
-	}, nil
+	aggregated, err := resultFromSamples(samples, measurement.Iterations, "pass")
+	if err != nil {
+		return tlsMeasurement{}, err
+	}
+	measurement.MedianMS = *aggregated.MedianMS
+	measurement.SamplesMS = aggregated.SamplesMS
+	measurement.RelativeStdDevPercent = aggregated.RelativeStdDevPercent
+	return measurement, nil
+}
+
+func tlsScenarioSections(text, scenario string) []string {
+	marker := "Running " + scenario + " scenario..."
+	var sections []string
+	searchFrom := 0
+	for searchFrom < len(text) {
+		relativeStart := strings.Index(text[searchFrom:], marker)
+		if relativeStart < 0 {
+			break
+		}
+		start := searchFrom + relativeStart
+		end := len(text)
+		if relativeEnd := strings.Index(text[start+len(marker):], "\nRunning "); relativeEnd >= 0 {
+			end = start + len(marker) + relativeEnd + 1
+		}
+		sections = append(sections, text[start:end])
+		searchFrom = end
+	}
+	return sections
 }
 
 func validateTLSPair(classical tlsMeasurement, pq *tlsMeasurement) error {
@@ -389,24 +444,53 @@ func normalizeCertificateAlgorithm(value string) string {
 	return value
 }
 
-func parseRoundTrip(text, marker string) (float64, error) {
-	start := strings.Index(text, marker)
-	if start < 0 {
-		return 0, fmt.Errorf("could not find %s", marker)
+func parseRoundTrip(text, marker string) ([]float64, int, error) {
+	var samples []float64
+	iterations := 0
+	searchFrom := 0
+	for searchFrom < len(text) {
+		relativeStart := strings.Index(text[searchFrom:], marker)
+		if relativeStart < 0 {
+			break
+		}
+		start := searchFrom + relativeStart
+		end := len(text)
+		for _, otherMarker := range []string{`ML-KEM ML-KEM-768 benchmark:`, `ECDH P-256 benchmark:`} {
+			if relativeEnd := strings.Index(text[start+len(marker):], otherMarker); relativeEnd >= 0 && start+len(marker)+relativeEnd < end {
+				end = start + len(marker) + relativeEnd
+			}
+		}
+		match := roundTripPattern.FindStringSubmatch(text[start:end])
+		if len(match) != 4 {
+			return nil, 0, fmt.Errorf("could not parse %s", marker)
+		}
+		completed, err := strconv.Atoi(match[1])
+		if err != nil || completed == 0 {
+			return nil, 0, fmt.Errorf("invalid completed count for %s", marker)
+		}
+		currentIterations, err := strconv.Atoi(match[2])
+		if err != nil || currentIterations == 0 {
+			return nil, 0, fmt.Errorf("invalid iteration count for %s", marker)
+		}
+		if completed != currentIterations {
+			return nil, 0, fmt.Errorf("incomplete round-trip sample for %s: %d/%d", marker, completed, currentIterations)
+		}
+		if iterations == 0 {
+			iterations = currentIterations
+		} else if iterations != currentIterations {
+			return nil, 0, fmt.Errorf("inconsistent iteration count for %s", marker)
+		}
+		totalMS, err := strconv.ParseFloat(match[3], 64)
+		if err != nil {
+			return nil, 0, fmt.Errorf("invalid elapsed time for %s: %w", marker, err)
+		}
+		samples = append(samples, totalMS/float64(completed))
+		searchFrom = start + len(marker)
 	}
-	match := roundTripPattern.FindStringSubmatch(text[start:])
-	if len(match) != 4 {
-		return 0, fmt.Errorf("could not parse %s", marker)
+	if len(samples) == 0 {
+		return nil, 0, fmt.Errorf("could not find %s", marker)
 	}
-	completed, err := strconv.Atoi(match[1])
-	if err != nil || completed == 0 {
-		return 0, fmt.Errorf("invalid completed count for %s", marker)
-	}
-	totalMS, err := strconv.ParseFloat(match[3], 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid elapsed time for %s: %w", marker, err)
-	}
-	return totalMS / float64(completed), nil
+	return samples, iterations, nil
 }
 
 func parseGoBenchmarks(path string) (map[string]benchmarkMeasurement, error) {
@@ -424,9 +508,6 @@ func parseGoBenchmarks(path string) (map[string]benchmarkMeasurement, error) {
 		if !ok {
 			continue
 		}
-		if _, exists := measurements[name]; exists {
-			continue
-		}
 		iterations, err := strconv.Atoi(match[3])
 		if err != nil {
 			return nil, fmt.Errorf("invalid Go iteration count: %w", err)
@@ -435,7 +516,13 @@ func parseGoBenchmarks(path string) (map[string]benchmarkMeasurement, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid Go ns/op: %w", err)
 		}
-		measurements[name] = benchmarkMeasurement{Iterations: iterations, Nanoseconds: nanoseconds}
+		measurement := measurements[name]
+		if measurement.Iterations != 0 && measurement.Iterations != iterations {
+			return nil, fmt.Errorf("inconsistent Go iteration count for %s", name)
+		}
+		measurement.Iterations = iterations
+		measurement.SamplesNanoseconds = append(measurement.SamplesNanoseconds, nanoseconds)
+		measurements[name] = measurement
 	}
 	for _, name := range goBenchmarks {
 		if _, ok := measurements[name]; !ok {
@@ -508,6 +595,9 @@ func loadRecords(root string) ([]record, error) {
 func validateRecords(records []record, requireComplete bool) error {
 	seen := make(map[string]bool)
 	for _, item := range records {
+		if item.BenchmarkElapsedMS <= 0 || item.CleanBuildMS <= 0 || item.CachedBuildMS <= 0 {
+			return fmt.Errorf("incomplete comparable timing metrics: %s", recordKey(item))
+		}
 		key := recordKey(item)
 		if seen[key] {
 			return fmt.Errorf("duplicate comparison record: %s", key)
@@ -551,8 +641,8 @@ func renderMarkdown(records []record) string {
 	builder.WriteString("This report compares the Go latest-stable baseline with .NET 10 and .NET 11 preview.\n")
 	builder.WriteString("Go uses the standard library and does not link to OpenSSL; its single baseline is independent of the .NET OpenSSL 3.5/4.0 matrix.\n\n")
 	builder.WriteString("## Results\n\n")
-	builder.WriteString("| Runtime | OpenSSL | Run ms | Raw ML-KEM ms | Raw ECDH ms | TLS classical ms | TLS PQ ms | PQ support |\n")
-	builder.WriteString("| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |\n")
+	builder.WriteString("| Runtime | OpenSSL | Benchmark ms | Clean build ms | Cached build ms | Raw ML-KEM ms | Raw ECDH ms | TLS classical ms | TLS PQ ms | PQ support |\n")
+	builder.WriteString("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n")
 	ordered := append([]record(nil), records...)
 	sort.Slice(ordered, func(i, j int) bool {
 		left, right := ordered[i], ordered[j]
@@ -562,8 +652,8 @@ func renderMarkdown(records []record) string {
 		return recordKey(left) < recordKey(right)
 	})
 	for _, item := range ordered {
-		builder.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s | %s |\n",
-			displayRuntime(item), displayOpenSSL(item), number(item.RunElapsedMS),
+		builder.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+			displayRuntime(item), displayOpenSSL(item), number(item.BenchmarkElapsedMS), number(item.CleanBuildMS), number(item.CachedBuildMS),
 			numberResult(item, "raw_mlkem768"), numberResult(item, "raw_ecdh_p256"),
 			numberResult(item, "tls_classical"), numberResult(item, "tls_post_quantum"), supportLabel(item)))
 	}
@@ -575,15 +665,15 @@ func renderMarkdown(records []record) string {
 		pq := item.Results["tls_post_quantum"]
 		builder.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s | %s |\n", displayRuntime(item), displayOpenSSL(item), classical.KeyExchangeGroup, pq.KeyExchangeGroup, displayValue(classical.CipherSuite), displayValue(pq.CipherSuite), displayValue(classical.CertificateAlgorithm), displayValue(pq.CertificateAlgorithm)))
 	}
-	builder.WriteString("\n`Run ms` is the whole benchmark command duration, including setup and both raw/TLS benchmark phases. The per-operation columns are the measured averages reported by each implementation.\n")
+	builder.WriteString("\n`Benchmark ms` covers only prebuilt raw/TLS benchmark execution. `Clean build ms` and `Cached build ms` cover the same two benchmark targets for each implementation and exclude benchmark execution. The per-operation columns are the medians across five measured samples; each result retains its sample count and relative standard deviation in JSON.\n")
 	return builder.String()
 }
 
 func writeDotnetMarkdown(path string, item record) error {
-	consoleMLKEM := item.Results["raw_mlkem768"].AverageMS
-	ecdh := item.Results["raw_ecdh_p256"].AverageMS
-	classical := item.Results["tls_classical"].AverageMS
-	pq := item.Results["tls_post_quantum"].AverageMS
+	consoleMLKEM := item.Results["raw_mlkem768"].MedianMS
+	ecdh := item.Results["raw_ecdh_p256"].MedianMS
+	classical := item.Results["tls_classical"].MedianMS
+	pq := item.Results["tls_post_quantum"].MedianMS
 	ratio := "n/a"
 	if consoleMLKEM != nil && ecdh != nil && *ecdh != 0 {
 		ratio = fmt.Sprintf("%.2fx", *consoleMLKEM / *ecdh)
@@ -592,8 +682,8 @@ func writeDotnetMarkdown(path string, item record) error {
 	if classical != nil && pq != nil && *classical != 0 {
 		tlsRatio = fmt.Sprintf("%.2fx", *pq / *classical)
 	}
-	content := fmt.Sprintf("# Benchmark Summary\n\n| Area | Algorithm | Avg ms |\n| --- | --- | ---: |\n| Console | ML-KEM-768 | %s |\n| Console | ECDH P-256 | %s |\n| TLS 1.3 | Classical | %s |\n| TLS 1.3 | Post-quantum | %s |\n\n## Relative slowdown\n\n- Console PQ vs classical: %s\n- TLS PQ vs classical: %s\n- Whole benchmark run: %.2f ms\n- PQ support: raw ML-KEM-768 %s; TLS hybrid X25519MLKEM768 %s\n",
-		pointerNumber(consoleMLKEM), pointerNumber(ecdh), pointerNumber(classical), pointerNumber(pq), ratio, tlsRatio, item.RunElapsedMS,
+	content := fmt.Sprintf("# Benchmark Summary\n\n| Area | Algorithm | Median ms |\n| --- | --- | ---: |\n| Console | ML-KEM-768 | %s |\n| Console | ECDH P-256 | %s |\n| TLS 1.3 | Classical | %s |\n| TLS 1.3 | Post-quantum | %s |\n\n## Relative slowdown\n\n- Console PQ vs classical: %s\n- TLS PQ vs classical: %s\n- Prebuilt benchmark phase: %.2f ms\n- Clean build (two targets): %.2f ms\n- Cached build (two targets): %.2f ms\n- PQ support: raw ML-KEM-768 %s; TLS hybrid X25519MLKEM768 %s\n",
+		pointerNumber(consoleMLKEM), pointerNumber(ecdh), pointerNumber(classical), pointerNumber(pq), ratio, tlsRatio, item.BenchmarkElapsedMS, item.CleanBuildMS, item.CachedBuildMS,
 		yesNo(item.PostQuantumSupport.RawMLKEM768), yesNo(item.PostQuantumSupport.TLSX25519MLKEM768))
 	return os.WriteFile(path, []byte(content), 0o644)
 }
@@ -639,7 +729,7 @@ func supportLabel(item record) string {
 func number(value float64) string { return fmt.Sprintf("%.2f", value) }
 
 func numberResult(item record, name string) string {
-	return pointerNumber(item.Results[name].AverageMS)
+	return pointerNumber(item.Results[name].MedianMS)
 }
 
 func pointerNumber(value *float64) string {

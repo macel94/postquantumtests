@@ -4,8 +4,8 @@ This repository compares post-quantum and classical key exchange costs in .NET a
 
 - [dotnet/raw-kem/Program.cs](dotnet/raw-kem/Program.cs) measures raw ML-KEM-768 and ECDH P-256 round trips.
 - [dotnet/tls/Program.cs](dotnet/tls/Program.cs) measures localhost TLS 1.3 handshakes and an encrypted echo over `SslStream`.
-- [go/raw_test.go](go/raw_test.go) measures the same raw ML-KEM-768 and ECDH P-256 operations with the Go standard library.
-- [go/tls_test.go](go/tls_test.go) measures Go TLS 1.3 with X25519 and hybrid X25519+ML-KEM-768 key exchange.
+- [go/raw/raw_test.go](go/raw/raw_test.go) measures the same raw ML-KEM-768 and ECDH P-256 operations with the Go standard library.
+- [go/tls/tls_test.go](go/tls/tls_test.go) measures Go TLS 1.3 with X25519 and hybrid X25519+ML-KEM-768 key exchange.
 
 ## Requirements
 
@@ -18,15 +18,18 @@ The Go tests use only the standard library. They do not require OpenSSL.
 
 ## Benchmark methodology
 
-Restore and build work happens before measurement. The .NET runner executes the
-already-built Release assemblies with `dotnet run --no-build`; it records five
-independent process samples by default. Set `BENCHMARK_REPETITIONS` to change
-the sample count.
+Restore happens before the build measurement. Each implementation has two
+benchmark targets: Go's `raw` and `tls` packages, and .NET's `raw-kem` and `tls`
+projects. The runners report clean and cached build durations for those two
+targets separately from benchmark execution.
 
-Go benchmarks use `go test -bench . -benchtime=100x -count=5`. The comparison
-record stores per-operation samples, their median, and sample relative standard
-deviation (RSD). Restore, build, process startup, and report-generation time are
-not performance metrics and are excluded from the comparison table.
+The operation phase uses prebuilt executables and five independent raw/TLS
+process samples by default. Go runs compiled test binaries directly; .NET runs
+the compiled Release DLLs directly. Both use 100 operations, zero warmup
+iterations, and the same raw/TLS scenario structure. Set
+`BENCHMARK_REPETITIONS` or `BENCHMARK_ITERATIONS` to change the workload.
+The comparison records report the median per-operation value across those samples
+and retain the sample list, count, and relative standard deviation.
 
 The raw primitive workload uses a reusable server key and a fresh client key per
 iteration. ML-KEM measures encapsulation and decapsulation. ECDH measures raw
@@ -59,8 +62,9 @@ dotnet/
   tls/                 .NET TLS 1.3 benchmark executable
   run-benchmarks.sh    .NET report-producing runner
 go/
-  raw_test.go          Raw ML-KEM and ECDH tests and benchmarks
-  tls_test.go          TLS 1.3 tests and benchmarks
+  raw/                 Raw ML-KEM and ECDH tests and benchmarks
+  tls/                 TLS 1.3 tests and benchmarks
+  run-benchmarks.sh    Two-target build and prebuilt execution runner
   cmd/benchmarkcompare Go report parser and comparison generator
 .devcontainer/
   net10-openssl35/     .NET 10 with OpenSSL 3.5
@@ -99,9 +103,9 @@ The runner defaults to `net10.0`. Select the .NET 11 preview explicitly:
 DOTNET_TARGET_FRAMEWORK=net11.0 bash dotnet/run-benchmarks.sh
 ```
 
-The runner restores and builds both projects for the selected target framework,
-then runs the raw crypto and TLS benchmarks from the built Release outputs. It
-writes reports under `dotnet/artifacts/`; the report parser is the Go tool in
+The runner restores both projects, measures clean and cached builds, then runs
+the raw crypto and TLS benchmarks from the built Release DLLs. It writes reports
+under `dotnet/artifacts/`; the report parser is the Go tool in
 `go/cmd/benchmarkcompare`.
 
 Use `BENCHMARK_REPETITIONS` to control independent .NET process samples:
@@ -150,7 +154,7 @@ cd go
 go test ./...
 go test -race ./...
 go vet ./...
-go test -bench . -benchmem -benchtime=100x ./...
+bash run-benchmarks.sh
 ```
 
 The raw Go tests use ML-KEM-768 and ECDH P-256. The TLS tests create a local ECDSA P-256 certificate, disable resumption, force TLS 1.3, and assert the negotiated curve and echo payload. The PQ TLS benchmark uses Go's standard-library hybrid `X25519MLKEM768` group.
@@ -191,7 +195,7 @@ fallback configurations from entering the comparison.
 The [Cross-Language Benchmark Comparison](.github/workflows/benchmark-comparison.yml) workflow runs Go latest stable once, then runs .NET 10 and .NET 11 preview against OpenSSL 3.5.0 and 4.0.0. Its final `comparison-report` artifact contains:
 
 - `comparison.json`, with versioned machine-readable records for all five matrix legs.
-- `comparison.md`, with side-by-side whole-run, raw crypto, TLS, and PQ-support tables.
+- `comparison.md`, with side-by-side prebuilt benchmark, clean-build, cached-build, raw crypto, TLS, and PQ-support tables.
 
 Go's OpenSSL field is `null` and displayed as `Not used` because Go uses its standard-library TLS and cryptography implementations. It is not duplicated into the OpenSSL 3.5/4.0 rows. Go reports the authoritative negotiated TLS group from `tls.ConnectionState.CurveID`. The .NET report identifies its configured TLS group as the single group restricted by `OPENSSL_CONF`, after the provider preflight succeeds, because `SslStream` does not expose the named group directly through a public API.
 

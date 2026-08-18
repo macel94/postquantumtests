@@ -1,4 +1,4 @@
-package postquantumtests
+package raw
 
 import (
 	"bytes"
