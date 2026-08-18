@@ -665,7 +665,7 @@ func renderMarkdown(records []record) string {
 		pq := item.Results["tls_post_quantum"]
 		builder.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s | %s |\n", displayRuntime(item), displayOpenSSL(item), classical.KeyExchangeGroup, pq.KeyExchangeGroup, displayValue(classical.CipherSuite), displayValue(pq.CipherSuite), displayValue(classical.CertificateAlgorithm), displayValue(pq.CertificateAlgorithm)))
 	}
-	builder.WriteString("\n`Benchmark ms` covers only prebuilt raw/TLS benchmark execution. `Clean build ms` and `Cached build ms` cover the same two benchmark targets for each implementation and exclude benchmark execution. The per-operation columns are the medians across five measured samples; each result retains its sample count and relative standard deviation in JSON.\n")
+	builder.WriteString("\n`Benchmark ms` covers only prebuilt raw/TLS benchmark execution. `Clean build ms` and `Cached build ms` cover the same two benchmark targets for each implementation and exclude benchmark execution. The per-operation columns are the medians across all measured samples; each result retains its sample count and relative standard deviation in JSON.\n")
 	return builder.String()
 }
 
