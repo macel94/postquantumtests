@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 var goBenchmarks = map[string]string{
 	"BenchmarkMLKEM768RoundTrip":       "raw_mlkem768",
@@ -28,23 +28,22 @@ type support struct {
 	RawMLKEM768               bool `json:"raw_mlkem768"`
 	TLSPostQuantumKeyExchange bool `json:"tls_post_quantum_key_exchange"`
 	TLSX25519MLKEM768         bool `json:"tls_x25519_mlkem768,omitempty"`
-	PQCertificate             bool `json:"pq_certificate"`
 }
 
 type result struct {
-	MedianMS              *float64 `json:"median_ms,omitempty"`
-	AverageMS             *float64 `json:"average_ms,omitempty"`
+	MedianMS              *float64  `json:"median_ms,omitempty"`
+	AverageMS             *float64  `json:"average_ms,omitempty"`
 	SamplesMS             []float64 `json:"samples_ms,omitempty"`
-	SampleCount           int      `json:"sample_count,omitempty"`
-	RelativeStdDevPercent *float64 `json:"relative_stddev_percent,omitempty"`
-	Iterations            int      `json:"iterations"`
-	Status                string   `json:"status"`
-	Workload              string   `json:"workload,omitempty"`
-	Protocol              string   `json:"protocol,omitempty"`
-	CipherSuite           string   `json:"cipher_suite,omitempty"`
-	KeyExchangeGroup      string   `json:"key_exchange_group,omitempty"`
-	CertificateAlgorithm  string   `json:"certificate_algorithm,omitempty"`
-	CertificateValidation string   `json:"certificate_validation,omitempty"`
+	SampleCount           int       `json:"sample_count,omitempty"`
+	RelativeStdDevPercent *float64  `json:"relative_stddev_percent,omitempty"`
+	Iterations            int       `json:"iterations"`
+	Status                string    `json:"status"`
+	Workload              string    `json:"workload,omitempty"`
+	Protocol              string    `json:"protocol,omitempty"`
+	CipherSuite           string    `json:"cipher_suite,omitempty"`
+	KeyExchangeGroup      string    `json:"key_exchange_group,omitempty"`
+	CertificateAlgorithm  string    `json:"certificate_algorithm,omitempty"`
+	CertificateValidation string    `json:"certificate_validation,omitempty"`
 }
 
 type record struct {
@@ -55,8 +54,8 @@ type record struct {
 	RuntimeChannel      string                 `json:"runtime_channel"`
 	OpenSSLVersion      *string                `json:"openssl_version"`
 	OpenSSLBackend      string                 `json:"openssl_backend"`
-	OpenSSLLibrary       string                 `json:"openssl_library,omitempty"`
-	RunElapsedMS         float64                `json:"run_elapsed_ms,omitempty"`
+	OpenSSLLibrary      string                 `json:"openssl_library,omitempty"`
+	RunElapsedMS        float64                `json:"run_elapsed_ms,omitempty"`
 	PostQuantumSupport  support                `json:"post_quantum_support"`
 	NegotiationEvidence map[string]string      `json:"negotiation_evidence,omitempty"`
 	Console             map[string]interface{} `json:"console,omitempty"`
@@ -132,7 +131,6 @@ func runGo(args []string) error {
 		PostQuantumSupport: support{
 			RawMLKEM768:       true,
 			TLSX25519MLKEM768: true,
-			PQCertificate:     false,
 		},
 		NegotiationEvidence: map[string]string{
 			"tls_key_exchange_group_source": "tls.ConnectionState.CurveID",
@@ -204,8 +202,10 @@ func runDotnet(args []string) error {
 	if err != nil {
 		return err
 	}
-	tlsPQSupported := pq != nil && strings.Contains(pq.KeyExchangeGroup, "MLKEM768")
-	pqCertificateSupported := pq != nil && strings.HasPrefix(pq.CertificateAlgorithm, "ML-DSA")
+	if err := validateTLSPair(classical, pq); err != nil {
+		return err
+	}
+	tlsPQSupported := pq != nil && strings.HasPrefix(pq.KeyExchangeGroup, "X25519MLKEM768")
 
 	tlsDetails := map[string]interface{}{
 		"classical_ms_per_handshake":      classical.AverageMS,
@@ -249,11 +249,10 @@ func runDotnet(args []string) error {
 		RunElapsedMS:   elapsedMS,
 		PostQuantumSupport: support{
 			RawMLKEM768:       mlkemSupported,
-				TLSX25519MLKEM768: tlsPQSupported,
-				PQCertificate:     pqCertificateSupported,
+			TLSX25519MLKEM768: tlsPQSupported,
 		},
 		NegotiationEvidence: map[string]string{
-			"tls_key_exchange_group_source": "restricted OpenSSL configuration via OPENSSL_CONF; SslStream does not expose the named group directly",
+			"tls_key_exchange_group_source": "OpenSSL TLS-group preflight plus a single-group OPENSSL_CONF restriction; SslStream does not expose the named group directly",
 		},
 		Console: map[string]interface{}{
 			"mlkem768_ms_per_round_trip":  mlkemMS,
@@ -324,10 +323,70 @@ func parseTLSScenario(text, scenario string) (tlsMeasurement, error) {
 		}
 	}
 	return tlsMeasurement{
-		AverageMS: average, Iterations: iterations, Protocol: values["Protocol"],
-		CipherSuite:      values["Cipher suite"],
-		KeyExchangeGroup: values["TLS key exchange group"], CertificateAlgorithm: values["Server certificate"],
+		AverageMS: average, Iterations: iterations, Protocol: normalizeTLSProtocol(values["Protocol"]),
+		CipherSuite:          values["Cipher suite"],
+		KeyExchangeGroup:     normalizeTLSGroup(values["TLS key exchange group"]),
+		CertificateAlgorithm: normalizeCertificateAlgorithm(values["Server certificate"]),
 	}, nil
+}
+
+func validateTLSPair(classical tlsMeasurement, pq *tlsMeasurement) error {
+	if err := validateTLSMeasurement(classical, "classical"); err != nil {
+		return err
+	}
+	if pq == nil {
+		return nil
+	}
+	if err := validateTLSMeasurement(*pq, "post-quantum"); err != nil {
+		return err
+	}
+	if classical.Protocol != pq.Protocol {
+		return fmt.Errorf("TLS scenarios used different protocols: %s versus %s", classical.Protocol, pq.Protocol)
+	}
+	if classical.CertificateAlgorithm != pq.CertificateAlgorithm {
+		return fmt.Errorf("TLS scenarios used different certificate algorithms: %s versus %s", classical.CertificateAlgorithm, pq.CertificateAlgorithm)
+	}
+	if classical.KeyExchangeGroup != "X25519" {
+		return fmt.Errorf("classical TLS scenario used unexpected key exchange group: %s", classical.KeyExchangeGroup)
+	}
+	if pq.KeyExchangeGroup != "X25519MLKEM768" {
+		return fmt.Errorf("post-quantum TLS scenario did not use hybrid X25519MLKEM768: %s", pq.KeyExchangeGroup)
+	}
+	return nil
+}
+
+func validateTLSMeasurement(measurement tlsMeasurement, scenario string) error {
+	if measurement.Protocol != "TLS 1.3" {
+		return fmt.Errorf("%s TLS scenario used unexpected protocol: %s", scenario, measurement.Protocol)
+	}
+	if measurement.CipherSuite == "" {
+		return fmt.Errorf("%s TLS scenario did not report a cipher suite", scenario)
+	}
+	if measurement.CertificateAlgorithm != "ECDSA P-256" {
+		return fmt.Errorf("%s TLS scenario used unexpected certificate algorithm: %s", scenario, measurement.CertificateAlgorithm)
+	}
+	return nil
+}
+
+func normalizeTLSGroup(value string) string {
+	if suffix := strings.Index(value, " ("); suffix >= 0 {
+		return value[:suffix]
+	}
+	return value
+}
+
+func normalizeTLSProtocol(value string) string {
+	if value == "Tls13" {
+		return "TLS 1.3"
+	}
+	return value
+}
+
+func normalizeCertificateAlgorithm(value string) string {
+	if strings.HasPrefix(value, "ECDSA") && strings.Contains(value, "256") {
+		return "ECDSA P-256"
+	}
+	return value
 }
 
 func parseRoundTrip(text, marker string) (float64, error) {
@@ -509,16 +568,12 @@ func renderMarkdown(records []record) string {
 			numberResult(item, "tls_classical"), numberResult(item, "tls_post_quantum"), supportLabel(item)))
 	}
 	builder.WriteString("\n## Negotiated results\n\n")
-	builder.WriteString("| Runtime | OpenSSL | Classical group | PQ group | Cipher suite | PQ certificate |\n")
-	builder.WriteString("| --- | --- | --- | --- | --- | --- |\n")
+	builder.WriteString("| Runtime | OpenSSL | Classical group | PQ group | Classical cipher | PQ cipher | Classical certificate | PQ certificate |\n")
+	builder.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, item := range ordered {
 		classical := item.Results["tls_classical"]
 		pq := item.Results["tls_post_quantum"]
-		certificate := "no"
-		if item.PostQuantumSupport.PQCertificate {
-			certificate = "yes"
-		}
-		builder.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %s |\n", displayRuntime(item), displayOpenSSL(item), classical.KeyExchangeGroup, pq.KeyExchangeGroup, displayValue(pq.CipherSuite), certificate))
+		builder.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s | %s |\n", displayRuntime(item), displayOpenSSL(item), classical.KeyExchangeGroup, pq.KeyExchangeGroup, displayValue(classical.CipherSuite), displayValue(pq.CipherSuite), displayValue(classical.CertificateAlgorithm), displayValue(pq.CertificateAlgorithm)))
 	}
 	builder.WriteString("\n`Run ms` is the whole benchmark command duration, including setup and both raw/TLS benchmark phases. The per-operation columns are the measured averages reported by each implementation.\n")
 	return builder.String()
@@ -537,9 +592,9 @@ func writeDotnetMarkdown(path string, item record) error {
 	if classical != nil && pq != nil && *classical != 0 {
 		tlsRatio = fmt.Sprintf("%.2fx", *pq / *classical)
 	}
-	content := fmt.Sprintf("# Benchmark Summary\n\n| Area | Algorithm | Avg ms |\n| --- | --- | ---: |\n| Console | ML-KEM-768 | %s |\n| Console | ECDH P-256 | %s |\n| TLS 1.3 | Classical | %s |\n| TLS 1.3 | Post-quantum | %s |\n\n## Relative slowdown\n\n- Console PQ vs classical: %s\n- TLS PQ vs classical: %s\n- Whole benchmark run: %.2f ms\n- PQ support: raw ML-KEM-768 %s; TLS hybrid %s; PQ certificate %s\n",
+	content := fmt.Sprintf("# Benchmark Summary\n\n| Area | Algorithm | Avg ms |\n| --- | --- | ---: |\n| Console | ML-KEM-768 | %s |\n| Console | ECDH P-256 | %s |\n| TLS 1.3 | Classical | %s |\n| TLS 1.3 | Post-quantum | %s |\n\n## Relative slowdown\n\n- Console PQ vs classical: %s\n- TLS PQ vs classical: %s\n- Whole benchmark run: %.2f ms\n- PQ support: raw ML-KEM-768 %s; TLS hybrid X25519MLKEM768 %s\n",
 		pointerNumber(consoleMLKEM), pointerNumber(ecdh), pointerNumber(classical), pointerNumber(pq), ratio, tlsRatio, item.RunElapsedMS,
-		yesNo(item.PostQuantumSupport.RawMLKEM768), yesNo(item.PostQuantumSupport.TLSX25519MLKEM768), yesNo(item.PostQuantumSupport.PQCertificate))
+		yesNo(item.PostQuantumSupport.RawMLKEM768), yesNo(item.PostQuantumSupport.TLSX25519MLKEM768))
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 

@@ -53,11 +53,11 @@ static async Task<int> RunOrchestratorAsync(AppOptions options)
     {
         if (options.Scenario == "pq")
         {
-            throw new PlatformNotSupportedException("The post-quantum TLS scenario requires ML-KEM and ML-DSA support.");
+            throw new PlatformNotSupportedException("The post-quantum TLS scenario requires ML-KEM support.");
         }
 
         scenarios.RemoveAll(static scenario => scenario.Name == "pq");
-        Console.WriteLine("Skipping pq scenario: ML-KEM and/or ML-DSA is not supported on this platform.");
+        Console.WriteLine("Skipping pq scenario: ML-KEM is not supported on this platform.");
     }
 
     Console.WriteLine("TLS 1.3 localhost benchmark");
@@ -85,7 +85,7 @@ static async Task<int> RunOrchestratorAsync(AppOptions options)
     return 0;
 }
 
-static bool IsPostQuantumTlsSupported() => MLKem.IsSupported && MLDsa.IsSupported;
+static bool IsPostQuantumTlsSupported() => MLKem.IsSupported;
 
 static async Task<ClientBenchmarkResult> RunScenarioAsync(ScenarioDefinition scenario, AppOptions options)
 {
@@ -109,6 +109,7 @@ static async Task<ClientBenchmarkResult> RunScenarioAsync(ScenarioDefinition sce
 
         File.WriteAllBytes(certificatePath, serverCertificate.Export(X509ContentType.Pkcs12, certificatePassword));
         File.WriteAllBytes(trustedCertificatePath, serverCertificate.Export(X509ContentType.Cert));
+        VerifyOpenSslGroupAvailable(scenario.OpenSslGroups, opensslConfigPath);
 
         using Process serverProcess = StartRoleProcess(
             role: "server",
@@ -135,6 +136,7 @@ static async Task<ClientBenchmarkResult> RunScenarioAsync(ScenarioDefinition sce
                 opensslConfigPath);
 
             ClientBenchmarkResult result = await ReadClientResultAsync(clientProcess);
+            ValidateNegotiation(scenario, result);
             await WaitForSuccessfulExitAsync(serverProcess, "server");
             return result;
         }
@@ -310,6 +312,31 @@ static bool MatchesTrustedCertificate(X509Certificate? presentedCertificate, X50
 
     using X509Certificate2 candidate = new(presentedCertificate);
     return candidate.RawData.AsSpan().SequenceEqual(trustedCertificate.RawData);
+}
+
+static void ValidateNegotiation(ScenarioDefinition scenario, ClientBenchmarkResult result)
+{
+    if (!string.Equals(result.SslProtocol, "Tls13", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException($"The {scenario.Name} scenario negotiated {result.SslProtocol} instead of TLS 1.3.");
+    }
+
+    if (string.IsNullOrWhiteSpace(result.CipherSuite))
+    {
+        throw new InvalidOperationException($"The {scenario.Name} scenario did not report a negotiated cipher suite.");
+    }
+
+    if (!string.Equals(result.PresentedCertificateAlgorithm, "ECDSA (256-bit)", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            $"The {scenario.Name} scenario presented {result.PresentedCertificateAlgorithm} instead of ECDSA (256-bit).");
+    }
+
+    if (!string.Equals(result.ConfiguredKeyExchangeGroup, scenario.ConfiguredKeyExchangeGroup, StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException(
+            $"The {scenario.Name} scenario reported an unexpected key exchange group: {result.ConfiguredKeyExchangeGroup}.");
+    }
 }
 
 static Process StartRoleProcess(
@@ -501,9 +528,9 @@ static ScenarioDefinition GetScenario(string scenario) => scenario switch
         OpenSslGroups: "X25519"),
     "pq" => new ScenarioDefinition(
         Name: "pq",
-        Description: "Post-quantum TLS 1.3 on loopback with an ML-DSA-65 certificate and MLKEM768 key exchange.",
-        ConfiguredKeyExchangeGroup: "MLKEM768 (forced via OPENSSL_CONF)",
-        OpenSslGroups: "MLKEM768"),
+        Description: "Post-quantum TLS 1.3 on loopback with an ECDSA P-256 certificate and X25519MLKEM768 hybrid key exchange.",
+        ConfiguredKeyExchangeGroup: "X25519MLKEM768 (restricted via OPENSSL_CONF)",
+        OpenSslGroups: "X25519MLKEM768"),
     _ => throw new ArgumentException($"Unknown scenario '{scenario}'. Expected 'classical', 'pq', or 'all'.")
 };
 
@@ -535,20 +562,47 @@ static string WriteOpenSslConfig(string tempDirectory, string groups)
     return configPath;
 }
 
+static void VerifyOpenSslGroupAvailable(string group, string configPath)
+{
+    ProcessStartInfo startInfo = new()
+    {
+        FileName = "openssl",
+        RedirectStandardError = true,
+        RedirectStandardOutput = true,
+        UseShellExecute = false,
+    };
+    startInfo.ArgumentList.Add("list");
+    startInfo.ArgumentList.Add("-tls1_3");
+    startInfo.ArgumentList.Add("-tls-groups");
+    startInfo.Environment["OPENSSL_CONF"] = configPath;
+
+    using Process process = Process.Start(startInfo)
+        ?? throw new InvalidOperationException("Unable to start the openssl group preflight.");
+    string output = process.StandardOutput.ReadToEnd();
+    string errorOutput = process.StandardError.ReadToEnd();
+    process.WaitForExit();
+
+    if (process.ExitCode != 0)
+    {
+        throw new InvalidOperationException(
+            $"The openssl group preflight failed with code {process.ExitCode}.{Environment.NewLine}{errorOutput}");
+    }
+
+    bool groupIsAvailable = output
+        .Split([':', ' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+        .Any(candidate => string.Equals(candidate, group, StringComparison.OrdinalIgnoreCase));
+
+    if (!groupIsAvailable)
+    {
+        throw new PlatformNotSupportedException(
+            $"OpenSSL does not advertise the required TLS 1.3 group '{group}'.");
+    }
+}
+
 static X509Certificate2 CreateServerCertificate(ScenarioDefinition scenario)
 {
     DateTimeOffset notBefore = DateTimeOffset.UtcNow.AddMinutes(-5);
     DateTimeOffset notAfter = notBefore.AddDays(7);
-
-    if (scenario.Name == "pq")
-    {
-#pragma warning disable SYSLIB5006
-        using MLDsa mldsa = MLDsa.GenerateKey(MLDsaAlgorithm.MLDsa65);
-        CertificateRequest request = new("CN=localhost", mldsa);
-#pragma warning restore SYSLIB5006
-        AddServerCertificateExtensions(request);
-        return request.CreateSelfSigned(notBefore, notAfter);
-    }
 
     using ECDsa ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
     CertificateRequest classicalRequest = new("CN=localhost", ecdsa, HashAlgorithmName.SHA256);

@@ -39,11 +39,13 @@ the negotiated protocol, cipher suite, key-exchange group, certificate
 algorithm, and validation policy. A TLS comparison is meaningful only when
 those workload fields match.
 
-The Go PQ scenario uses hybrid `X25519MLKEM768` with an ECDSA P-256
-certificate. The current .NET PQ scenario uses pure `MLKEM768` with an ML-DSA-65
-certificate, so it is reported as a different workload rather than an
-apples-to-apples Go comparison. Its time includes both certificate and key
-exchange work.
+Both runtimes use ECDSA P-256 certificates in both TLS scenarios. The classical
+scenario uses `X25519`; the post-quantum scenario uses hybrid
+`X25519MLKEM768`. This keeps certificate authentication, TLS version, payload,
+connection lifecycle, and record-protection selection comparable while changing
+the key-exchange group. Go directly observes the negotiated group; .NET uses an
+OpenSSL preflight and a single-group `OPENSSL_CONF` restriction because public
+`SslStream` does not expose the negotiated named group.
 
 OpenSSL version and loaded library are recorded separately. A row where PQ
 algorithms are unsupported is a capability result and is shown as `n/a`; it must
@@ -136,7 +138,10 @@ dotnet run --no-restore -c Release --framework net11.0 --project dotnet/tls/TlsE
 
 Available TLS options are `--scenario classical|pq|all`, `--iterations N`, `--warmup N`, and `--payload-bytes N`.
 
-The .NET TLS benchmark reports the TLS version, record-protection cipher suite, certificate algorithm, and configured key-exchange group. In TLS 1.3, the cipher suite is independent of the key-exchange group, so the classical/PQ group is the important comparison.
+The .NET TLS benchmark reports the TLS version, record-protection cipher suite,
+certificate algorithm, and configured key-exchange group. In TLS 1.3, the cipher
+suite is independent of the key-exchange group, so both cipher suites are
+recorded and the classical/PQ group is the important comparison.
 
 ## Run the Go tests and benchmarks
 
@@ -173,7 +178,13 @@ bash .devcontainer/install-openssl.sh 3.5.0
 
 The raw benchmarks isolate cryptographic operations. The TLS benchmarks include TCP setup, certificate verification, TLS handshake, encrypted echo, and connection close for each operation.
 
-The .NET and Go raw ML-KEM-768 results are directly comparable at the algorithm level. Their PQ TLS scenarios are related but not identical: .NET uses its OpenSSL-backed ML-KEM-768 and ML-DSA certificate configuration, while Go's standard library currently exposes hybrid X25519+ML-KEM-768 key exchange and uses an ECDSA certificate. Compare each language's classical/PQ delta within its own workflow.
+The .NET and Go raw ML-KEM-768 results are directly comparable at the algorithm
+level. Their TLS scenarios now use the same protocol shape: TLS 1.3 with an
+ECDSA P-256 certificate, `X25519` for classical exchange, and
+`X25519MLKEM768` for post-quantum exchange. Go reports the negotiated group
+directly; .NET reports the group selected by its restricted OpenSSL
+configuration, with a preflight check preventing unsupported or silently
+fallback configurations from entering the comparison.
 
 ## Cross-language comparison reports
 
@@ -182,7 +193,7 @@ The [Cross-Language Benchmark Comparison](.github/workflows/benchmark-comparison
 - `comparison.json`, with versioned machine-readable records for all five matrix legs.
 - `comparison.md`, with side-by-side whole-run, raw crypto, TLS, and PQ-support tables.
 
-Go's OpenSSL field is `null` and displayed as `Not used` because Go uses its standard-library TLS and cryptography implementations. It is not duplicated into the OpenSSL 3.5/4.0 rows. Go reports the authoritative negotiated TLS group from `tls.ConnectionState.CurveID`. The .NET report identifies its TLS group as the single group restricted by `OPENSSL_CONF`, because `SslStream` does not expose the named group directly through a public API.
+Go's OpenSSL field is `null` and displayed as `Not used` because Go uses its standard-library TLS and cryptography implementations. It is not duplicated into the OpenSSL 3.5/4.0 rows. Go reports the authoritative negotiated TLS group from `tls.ConnectionState.CurveID`. The .NET report identifies its configured TLS group as the single group restricted by `OPENSSL_CONF`, after the provider preflight succeeds, because `SslStream` does not expose the named group directly through a public API.
 
 ## Dependency updates
 
