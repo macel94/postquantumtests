@@ -572,7 +572,6 @@ static void VerifyOpenSslGroupAvailable(string group, string configPath)
         UseShellExecute = false,
     };
     startInfo.ArgumentList.Add("list");
-    startInfo.ArgumentList.Add("-tls1_3");
     startInfo.ArgumentList.Add("-tls-groups");
     startInfo.Environment["OPENSSL_CONF"] = configPath;
 
