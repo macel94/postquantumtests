@@ -1,9 +1,36 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestParseGoBenchmarksKeepsFirstRepeatedSample(t *testing.T) {
+	inputPath := filepath.Join(t.TempDir(), "benchmark-results.txt")
+	input := strings.Join([]string{
+		"BenchmarkMLKEM768RoundTrip-4 100 100 ns/op",
+		"BenchmarkMLKEM768RoundTrip-4 100 200 ns/op",
+		"BenchmarkECDHP256RoundTrip-4 100 300 ns/op",
+		"BenchmarkECDHP256RoundTrip-4 100 400 ns/op",
+		"BenchmarkTLS13ClassicalEcho-4 100 500 ns/op",
+		"BenchmarkTLS13ClassicalEcho-4 100 600 ns/op",
+		"BenchmarkTLS13HybridMLKEM768Echo-4 100 700 ns/op",
+		"BenchmarkTLS13HybridMLKEM768Echo-4 100 800 ns/op",
+	}, "\n")
+	if err := os.WriteFile(inputPath, []byte(input), 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	measurements, err := parseGoBenchmarks(inputPath)
+	if err != nil {
+		t.Fatalf("parseGoBenchmarks() error = %v", err)
+	}
+	if got := measurements["raw_mlkem768"].Nanoseconds; got != 100 {
+		t.Fatalf("raw_mlkem768 ns/op = %v, want first sample 100", got)
+	}
+}
 
 func TestParseTLSScenarioCanonicalizesDotnetLabels(t *testing.T) {
 	text := `Running pq scenario...

@@ -22,6 +22,8 @@ jobs:
   go:
     name: Go latest stable
     runs-on: ubuntu-latest
+    env:
+      BENCHMARK_REPETITIONS: 5
     defaults:
       run:
         working-directory: go
@@ -39,9 +41,9 @@ jobs:
 
       - name: Run Go tests and benchmarks
         run: |
-          go test ./...
           started_ns=$(date +%s%N)
-          go test -bench . -benchmem -benchtime=100x ./... | tee benchmark-results.txt
+          go test ./...
+          go test -bench . -benchmem -benchtime=100x -count="$BENCHMARK_REPETITIONS" ./... | tee benchmark-results.txt
           finished_ns=$(date +%s%N)
           run_elapsed_ms=$(awk "BEGIN { printf \"%.3f\", ($finished_ns - $started_ns) / 1000000 }")
           go run ./cmd/benchmarkcompare go \
@@ -100,6 +102,7 @@ jobs:
             openssl_version: 4.0.0
             artifact: comparison-dotnet-11-preview-openssl-4.0
     env:
+      BENCHMARK_REPETITIONS: 5
       DOTNET_TARGET_FRAMEWORK: ${{ matrix.framework }}
       BENCHMARK_OPENSSL_VERSION: ${{ matrix.openssl_version }}
       BENCHMARK_RUNTIME_CHANNEL: ${{ matrix.runtime_channel }}

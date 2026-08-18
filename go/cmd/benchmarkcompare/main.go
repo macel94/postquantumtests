@@ -425,7 +425,7 @@ func parseGoBenchmarks(path string) (map[string]benchmarkMeasurement, error) {
 			continue
 		}
 		if _, exists := measurements[name]; exists {
-			return nil, fmt.Errorf("duplicate Go benchmark result: %s", name)
+			continue
 		}
 		iterations, err := strconv.Atoi(match[3])
 		if err != nil {
