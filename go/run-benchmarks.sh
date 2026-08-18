@@ -37,22 +37,41 @@ cached_build_ms=$(awk "BEGIN { printf \"%.3f\", ($cached_build_finished_ns - $ca
 
 : > "$results_path"
 benchmark_started_ns=$(date +%s%N)
-for ((sample_index = 1; sample_index <= benchmark_repetitions; sample_index++)); do
-  echo "Running Go raw benchmark sample $sample_index/$benchmark_repetitions..."
+
+run_raw_benchmark() {
+  local benchmark_name="$1"
+  echo "Running Go $benchmark_name sample $sample_index/$benchmark_repetitions..."
   "$build_dir/raw.test" \
     -test.run '^$' \
-    -test.bench '^Benchmark(MLKEM768RoundTrip|ECDHP256RoundTrip)$' \
+    -test.bench "^${benchmark_name}$" \
     -test.benchmem \
     -test.benchtime="${benchmark_iterations}x" \
     -test.count=1 | tee -a "$results_path"
+}
 
-  echo "Running Go TLS benchmark sample $sample_index/$benchmark_repetitions..."
+run_tls_benchmark() {
+  local benchmark_name="$1"
+  echo "Running Go $benchmark_name sample $sample_index/$benchmark_repetitions..."
   "$build_dir/tls.test" \
     -test.run '^$' \
-    -test.bench '^BenchmarkTLS13(ClassicalEcho|HybridMLKEM768Echo)$' \
+    -test.bench "^${benchmark_name}$" \
     -test.benchmem \
     -test.benchtime="${benchmark_iterations}x" \
     -test.count=1 | tee -a "$results_path"
+}
+
+for ((sample_index = 1; sample_index <= benchmark_repetitions; sample_index++)); do
+  if (( sample_index % 2 == 1 )); then
+    run_raw_benchmark BenchmarkMLKEM768RoundTrip
+    run_raw_benchmark BenchmarkECDHP256RoundTrip
+    run_tls_benchmark BenchmarkTLS13ClassicalEcho
+    run_tls_benchmark BenchmarkTLS13HybridMLKEM768Echo
+  else
+    run_raw_benchmark BenchmarkECDHP256RoundTrip
+    run_raw_benchmark BenchmarkMLKEM768RoundTrip
+    run_tls_benchmark BenchmarkTLS13HybridMLKEM768Echo
+    run_tls_benchmark BenchmarkTLS13ClassicalEcho
+  fi
 done
 benchmark_finished_ns=$(date +%s%N)
 benchmark_elapsed_ms=$(awk "BEGIN { printf \"%.3f\", ($benchmark_finished_ns - $benchmark_started_ns) / 1000000 }")

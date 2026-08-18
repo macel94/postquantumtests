@@ -210,27 +210,27 @@ static async Task<int> RunClientAsync(AppOptions options)
     X509Certificate2 trustedCertificate = X509CertificateLoader.LoadCertificateFromFile(options.TrustedCertificatePath);
     byte[] payload = CreatePayload(options.PayloadBytes);
 
+    NegotiationSnapshot? snapshot = null;
     for (int i = 0; i < options.WarmupIterations; i++)
     {
-        await ExecuteClientConnectionAsync(options, trustedCertificate, payload, captureMetadata: false);
-    }
-
-    NegotiationSnapshot? snapshot = null;
-    Stopwatch stopwatch = Stopwatch.StartNew();
-
-    for (int i = 0; i < options.Iterations; i++)
-    {
-        snapshot ??= await ExecuteClientConnectionAsync(options, trustedCertificate, payload, captureMetadata: true);
-
-        if (snapshot is not null && i > 0)
+        if (snapshot is null)
+        {
+            snapshot = await ExecuteClientConnectionAsync(options, trustedCertificate, payload, captureMetadata: true);
+        }
+        else
         {
             await ExecuteClientConnectionAsync(options, trustedCertificate, payload, captureMetadata: false);
         }
     }
 
-    stopwatch.Stop();
+    ArgumentNullException.ThrowIfNull(snapshot);
 
-    snapshot ??= await ExecuteClientConnectionAsync(options, trustedCertificate, payload, captureMetadata: true);
+    Stopwatch stopwatch = Stopwatch.StartNew();
+    for (int i = 0; i < options.Iterations; i++)
+    {
+        await ExecuteClientConnectionAsync(options, trustedCertificate, payload, captureMetadata: false);
+    }
+    stopwatch.Stop();
 
     ClientBenchmarkResult result = new(
         Scenario: scenario.Name,
@@ -718,7 +718,7 @@ static AppOptions ParseArguments(string[] args)
                 iterations = ParsePositiveInt(ReadValue(args, ref i, argument), argument, allowZero: false);
                 break;
             case "--warmup":
-                warmupIterations = ParsePositiveInt(ReadValue(args, ref i, argument), argument, allowZero: true);
+                warmupIterations = ParsePositiveInt(ReadValue(args, ref i, argument), argument, allowZero: false);
                 break;
             case "--payload-bytes":
                 payloadBytes = ParsePositiveInt(ReadValue(args, ref i, argument), argument, allowZero: false);

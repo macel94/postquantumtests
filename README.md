@@ -23,13 +23,21 @@ benchmark targets: Go's `raw` and `tls` packages, and .NET's `raw-kem` and `tls`
 projects. The runners report clean and cached build durations for those two
 targets separately from benchmark execution.
 
-The operation phase uses prebuilt executables and five independent raw/TLS
-process samples by default. Go runs compiled test binaries directly; .NET runs
-the compiled Release DLLs directly. Both use 100 operations, zero warmup
-iterations, and the same raw/TLS scenario structure. Set
-`BENCHMARK_REPETITIONS` or `BENCHMARK_ITERATIONS` to change the workload.
+The operation phase uses prebuilt executables. CI collects 20 independent
+raw/TLS process samples; the local harness default remains five. Go runs
+compiled test binaries directly; .NET runs compiled Release DLLs directly. Both
+use 100 measured operations per sample. Each TLS process performs one
+unmeasured warmup connection that validates protocol, certificate, cipher, and
+group evidence before timing begins. The harness alternates raw and TLS scenario
+order on successive samples to reduce time-drift bias. Set
+`BENCHMARK_REPETITIONS`, `BENCHMARK_ITERATIONS`, or
+`TLS_WARMUP_ITERATIONS` to change the workload.
+
 The comparison records report the median per-operation value across those samples
-and retain the sample list, count, and relative standard deviation.
+and retain the sample list, count, and relative standard deviation. The
+cross-language workflow runs every record serially on one `ubuntu-24.04` runner;
+absolute values remain implementation-specific measurements, not a universal
+language ranking.
 
 The raw primitive workload uses a reusable server key and a fresh client key per
 iteration. ML-KEM measures encapsulation and decapsulation. ECDH measures raw
@@ -37,10 +45,11 @@ P-256 shared-secret agreement on both sides without adding a KDF to one
 implementation only.
 
 The TLS workload uses TLS 1.3 over a fresh loopback TCP connection for every
-sampled handshake, certificate validation, and a 32-byte echo. Reports include
-the negotiated protocol, cipher suite, key-exchange group, certificate
-algorithm, and validation policy. A TLS comparison is meaningful only when
-those workload fields match.
+sampled handshake and a 32-byte echo. Both implementations use separate client
+and server processes during the measured connection phase. Reports include the
+protocol, cipher suite, key-exchange group, certificate algorithm, and validation
+policy established by the unmeasured warmup connection. A TLS comparison is
+meaningful only when those workload fields match.
 
 Both runtimes use ECDSA P-256 certificates in both TLS scenarios. The classical
 scenario uses `X25519`; the post-quantum scenario uses hybrid
@@ -50,9 +59,10 @@ the key-exchange group. Go directly observes the negotiated group; .NET uses an
 OpenSSL preflight and a single-group `OPENSSL_CONF` restriction because public
 `SslStream` does not expose the negotiated named group.
 
-OpenSSL version and loaded library are recorded separately. A row where PQ
-algorithms are unsupported is a capability result and is shown as `n/a`; it must
-not be interpreted as an OpenSSL performance regression.
+Each .NET provider row supplies an explicit versioned `LD_LIBRARY_PATH` prefix
+to the runtime and verifies that prefix's `openssl` binary before execution. A
+row where PQ algorithms are unsupported is a capability result and is shown as
+`n/a`; it must not be interpreted as an OpenSSL performance regression.
 
 ## Repository layout
 
@@ -182,9 +192,10 @@ bash .devcontainer/install-openssl.sh 3.5.0
 
 The raw benchmarks isolate cryptographic operations. The TLS benchmarks include TCP setup, certificate verification, TLS handshake, encrypted echo, and connection close for each operation.
 
-The .NET and Go raw ML-KEM-768 results are directly comparable at the algorithm
-level. Their TLS scenarios now use the same protocol shape: TLS 1.3 with an
-ECDSA P-256 certificate, `X25519` for classical exchange, and
+The Go and .NET raw paths use matching ML-KEM-768 and P-256 ECDH round-trip
+semantics. An ML-KEM/ECDH ratio remains a workload-specific cost signal, not a
+claim that the algorithms are interchangeable. Their TLS scenarios use the same
+protocol shape: TLS 1.3 with an ECDSA P-256 certificate, `X25519` for classical exchange, and
 `X25519MLKEM768` for post-quantum exchange. Go reports the negotiated group
 directly; .NET reports the group selected by its restricted OpenSSL
 configuration, with a preflight check preventing unsupported or silently
@@ -192,10 +203,11 @@ fallback configurations from entering the comparison.
 
 ## Cross-language comparison reports
 
-The [Cross-Language Benchmark Comparison](.github/workflows/benchmark-comparison.yml) workflow runs Go latest stable once, then runs .NET 10 and .NET 11 preview against OpenSSL 3.5.0 and 4.0.0. Its final `comparison-report` artifact contains:
+The [Cross-Language Benchmark Comparison](.github/workflows/benchmark-comparison.yml) workflow runs Go 1.26.6, .NET 10, and .NET 11 preview serially on the same `ubuntu-24.04` runner. It exercises .NET against OpenSSL 3.5.0 and 4.0.0, using an explicit provider prefix for every provider row. Its artifacts contain:
 
 - `comparison.json`, with versioned machine-readable records for all five matrix legs.
 - `comparison.md`, with side-by-side prebuilt benchmark, clean-build, cached-build, raw crypto, TLS, and PQ-support tables.
+- `comparison-inputs/toolchains.txt`, with the runner kernel, Go version, and .NET SDK/runtime details for that exact run.
 
 Go's OpenSSL field is `null` and displayed as `Not used` because Go uses its standard-library TLS and cryptography implementations. It is not duplicated into the OpenSSL 3.5/4.0 rows. Go reports the authoritative negotiated TLS group from `tls.ConnectionState.CurveID`. The .NET report identifies its configured TLS group as the single group restricted by `OPENSSL_CONF`, after the provider preflight succeeds, because `SslStream` does not expose the named group directly through a public API.
 

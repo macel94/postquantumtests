@@ -5,7 +5,6 @@ import (
 	"crypto/ecdh"
 	"crypto/mlkem"
 	"crypto/rand"
-	"crypto/sha256"
 	"testing"
 )
 
@@ -30,7 +29,7 @@ func TestMLKEM768RoundTrip(t *testing.T) {
 			t.Fatalf("decapsulate ML-KEM-768 ciphertext on iteration %d: %v", iteration, err)
 		}
 
-		if sha256.Sum256(clientSecret) != sha256.Sum256(serverSecret) {
+		if !bytes.Equal(clientSecret, serverSecret) {
 			t.Fatalf("ML-KEM-768 shared secrets differ on iteration %d", iteration)
 		}
 	}
@@ -57,9 +56,7 @@ func BenchmarkMLKEM768RoundTrip(b *testing.B) {
 			b.Fatalf("decapsulate ML-KEM-768 ciphertext: %v", err)
 		}
 
-		clientDigest := sha256.Sum256(clientSecret)
-		serverDigest := sha256.Sum256(serverSecret)
-		if clientDigest != serverDigest {
+		if !bytes.Equal(clientSecret, serverSecret) {
 			b.Fatal("ML-KEM-768 shared secrets differ")
 		}
 	}

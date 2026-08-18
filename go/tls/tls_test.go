@@ -1,6 +1,7 @@
 package tlsbenchmark
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -8,30 +9,45 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"net"
-	"sync"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
 
 const tlsPayloadBytes = 32
 
+const (
+	tlsServerProcessEnv     = "POSTQUANTUM_TLS_SERVER_PROCESS"
+	tlsServerCertificateEnv = "POSTQUANTUM_TLS_SERVER_CERTIFICATE"
+	tlsServerPrivateKeyEnv  = "POSTQUANTUM_TLS_SERVER_PRIVATE_KEY"
+	tlsServerCurveEnv       = "POSTQUANTUM_TLS_SERVER_CURVE"
+	tlsServerReadyPrefix    = "POSTQUANTUM_TLS_SERVER_READY "
+)
+
 type tlsHarness struct {
-	listener     net.Listener
-	address      string
-	serverConfig *tls.Config
-	clientConfig *tls.Config
-	serverErrors chan error
-	acceptDone   chan struct{}
-	handlerWait  sync.WaitGroup
-	errorOnce    sync.Once
+	address       string
+	clientConfig  *tls.Config
+	serverProcess *exec.Cmd
+	serverWait    <-chan error
+	serverStderr  *bytes.Buffer
 }
 
 func TestTLS13ClassicalEcho(t *testing.T) {
+	if os.Getenv(tlsServerProcessEnv) == "1" {
+		runTLSServerProcess(t)
+		return
+	}
+
 	harness := newTLSHarness(t, tls.X25519)
 	t.Cleanup(func() {
 		if err := harness.close(); err != nil {
@@ -39,7 +55,11 @@ func TestTLS13ClassicalEcho(t *testing.T) {
 		}
 	})
 
-	if _, err := harness.roundTrip(tls.X25519); err != nil {
+	state, err := harness.roundTrip(tls.X25519, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyConnectionState(state, tls.X25519); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -52,7 +72,11 @@ func TestTLS13HybridMLKEM768Echo(t *testing.T) {
 		}
 	})
 
-	if _, err := harness.roundTrip(tls.X25519MLKEM768); err != nil {
+	state, err := harness.roundTrip(tls.X25519MLKEM768, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyConnectionState(state, tls.X25519MLKEM768); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -73,14 +97,18 @@ func benchmarkTLS13Echo(b *testing.B, curve tls.CurveID) {
 		}
 	})
 
-	if _, err := harness.roundTrip(curve); err != nil {
+	state, err := harness.roundTrip(curve, true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := verifyConnectionState(state, curve); err != nil {
 		b.Fatal(err)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := harness.roundTrip(curve); err != nil {
+		if _, err := harness.roundTrip(curve, false); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -94,13 +122,6 @@ func newTLSHarness(t testing.TB, curve tls.CurveID) *tlsHarness {
 		t.Fatalf("create TLS certificate: %v", err)
 	}
 
-	serverConfig := &tls.Config{
-		Certificates:           []tls.Certificate{certificate},
-		MinVersion:             tls.VersionTLS13,
-		MaxVersion:             tls.VersionTLS13,
-		CurvePreferences:       []tls.CurveID{curve},
-		SessionTicketsDisabled: true,
-	}
 	clientConfig := &tls.Config{
 		RootCAs:                x509.NewCertPool(),
 		ServerName:             "localhost",
@@ -111,75 +132,52 @@ func newTLSHarness(t testing.TB, curve tls.CurveID) *tlsHarness {
 	}
 	clientConfig.RootCAs.AddCert(root)
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	serverProcess, address, serverWait, serverStderr, err := startTLSServerProcess(certificate, curve)
 	if err != nil {
-		t.Fatalf("listen for TLS harness: %v", err)
+		t.Fatalf("start TLS server process: %v", err)
 	}
 
-	harness := &tlsHarness{
-		listener:     listener,
-		address:      listener.Addr().String(),
-		serverConfig: serverConfig,
-		clientConfig: clientConfig,
-		serverErrors: make(chan error, 1),
-		acceptDone:   make(chan struct{}),
-	}
-	go harness.acceptConnections()
-	return harness
-}
-
-func (h *tlsHarness) acceptConnections() {
-	defer close(h.acceptDone)
-	for {
-		connection, err := h.listener.Accept()
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return
-			}
-			h.reportError(fmt.Errorf("accept TLS connection: %w", err))
-			return
-		}
-
-		h.handlerWait.Add(1)
-		go h.handleConnection(connection)
+	return &tlsHarness{
+		address:       address,
+		clientConfig:  clientConfig,
+		serverProcess: serverProcess,
+		serverWait:    serverWait,
+		serverStderr:  serverStderr,
 	}
 }
 
-func (h *tlsHarness) handleConnection(connection net.Conn) {
-	defer h.handlerWait.Done()
+func handleTLSConnection(connection net.Conn, serverConfig *tls.Config) error {
 	defer connection.Close()
 
-	tlsConnection := tls.Server(connection, h.serverConfig)
+	tlsConnection := tls.Server(connection, serverConfig)
 	defer tlsConnection.Close()
 	if err := tlsConnection.Handshake(); err != nil {
-		h.reportError(fmt.Errorf("server TLS handshake: %w", err))
-		return
+		return fmt.Errorf("server TLS handshake: %w", err)
 	}
 
 	request := make([]byte, tlsPayloadBytes)
 	if _, err := io.ReadFull(tlsConnection, request); err != nil {
-		h.reportError(fmt.Errorf("read TLS echo request: %w", err))
-		return
+		return fmt.Errorf("read TLS echo request: %w", err)
 	}
 	if !bytes.Equal(request, tlsPayload()) {
-		h.reportError(errors.New("TLS echo request did not match the expected payload"))
-		return
+		return errors.New("TLS echo request did not match the expected payload")
 	}
 	if err := writeAll(tlsConnection, request); err != nil {
-		h.reportError(fmt.Errorf("write TLS echo response: %w", err))
+		return fmt.Errorf("write TLS echo response: %w", err)
 	}
+	return nil
 }
 
-func (h *tlsHarness) roundTrip(expectedCurve tls.CurveID) (tls.ConnectionState, error) {
+func (h *tlsHarness) roundTrip(expectedCurve tls.CurveID, captureState bool) (tls.ConnectionState, error) {
 	connection, err := tls.Dial("tcp", h.address, h.clientConfig)
 	if err != nil {
-		return tls.ConnectionState{}, h.withServerError(fmt.Errorf("dial TLS %s: %w", expectedCurve, err))
+		return tls.ConnectionState{}, fmt.Errorf("dial TLS %s: %w", expectedCurve, err)
 	}
 	defer connection.Close()
 
-	state := connection.ConnectionState()
-	if err := verifyConnectionState(state, expectedCurve); err != nil {
-		return state, err
+	state := tls.ConnectionState{}
+	if captureState {
+		state = connection.ConnectionState()
 	}
 
 	request := tlsPayload()
@@ -193,41 +191,104 @@ func (h *tlsHarness) roundTrip(expectedCurve tls.CurveID) (tls.ConnectionState, 
 	if !bytes.Equal(request, response) {
 		return state, fmt.Errorf("TLS %s echo response did not match the request", expectedCurve)
 	}
-	if err := h.serverError(); err != nil {
-		return state, err
-	}
 	return state, nil
 }
 
 func (h *tlsHarness) close() error {
-	if err := h.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-		return err
+	killErr := h.serverProcess.Process.Kill()
+	if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+		return killErr
 	}
-	<-h.acceptDone
-	h.handlerWait.Wait()
-	return h.serverError()
+	if err := <-h.serverWait; err != nil && errors.Is(killErr, os.ErrProcessDone) {
+		return fmt.Errorf("TLS server process: %w: %s", err, h.serverStderr.String())
+	}
+	return nil
 }
 
-func (h *tlsHarness) reportError(err error) {
-	h.errorOnce.Do(func() {
-		h.serverErrors <- err
-	})
+func startTLSServerProcess(certificate tls.Certificate, curve tls.CurveID) (*exec.Cmd, string, <-chan error, *bytes.Buffer, error) {
+	privateKeyDER, err := x509.MarshalPKCS8PrivateKey(certificate.PrivateKey)
+	if err != nil {
+		return nil, "", nil, nil, err
+	}
+	certificatePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Certificate[0]})
+	privateKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyDER})
+
+	command := exec.Command(os.Args[0], "-test.run", "^TestTLS13ClassicalEcho$", "-test.v")
+	command.Env = append(os.Environ(),
+		tlsServerProcessEnv+"=1",
+		tlsServerCertificateEnv+"="+base64.StdEncoding.EncodeToString(certificatePEM),
+		tlsServerPrivateKeyEnv+"="+base64.StdEncoding.EncodeToString(privateKeyPEM),
+		tlsServerCurveEnv+"="+strconv.FormatUint(uint64(curve), 10),
+	)
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return nil, "", nil, nil, err
+	}
+	stderr := &bytes.Buffer{}
+	command.Stderr = stderr
+	if err := command.Start(); err != nil {
+		return nil, "", nil, nil, err
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		if address, ok := strings.CutPrefix(scanner.Text(), tlsServerReadyPrefix); ok {
+			wait := make(chan error, 1)
+			go func() {
+				wait <- command.Wait()
+			}()
+			return command, address, wait, stderr, nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, "", nil, nil, err
+	}
+	if err := command.Wait(); err != nil {
+		return nil, "", nil, nil, fmt.Errorf("TLS server process exited before readiness: %w: %s", err, stderr.String())
+	}
+	return nil, "", nil, nil, errors.New("TLS server process exited before readiness")
 }
 
-func (h *tlsHarness) serverError() error {
-	select {
-	case err := <-h.serverErrors:
-		return err
-	default:
-		return nil
+func runTLSServerProcess(t *testing.T) {
+	certificatePEM, err := base64.StdEncoding.DecodeString(os.Getenv(tlsServerCertificateEnv))
+	if err != nil {
+		t.Fatalf("decode server certificate: %v", err)
 	}
-}
+	privateKeyPEM, err := base64.StdEncoding.DecodeString(os.Getenv(tlsServerPrivateKeyEnv))
+	if err != nil {
+		t.Fatalf("decode server private key: %v", err)
+	}
+	certificate, err := tls.X509KeyPair(certificatePEM, privateKeyPEM)
+	if err != nil {
+		t.Fatalf("load server key pair: %v", err)
+	}
+	curveValue, err := strconv.ParseUint(os.Getenv(tlsServerCurveEnv), 10, 16)
+	if err != nil {
+		t.Fatalf("parse server curve: %v", err)
+	}
+	serverConfig := &tls.Config{
+		Certificates:           []tls.Certificate{certificate},
+		MinVersion:             tls.VersionTLS13,
+		MaxVersion:             tls.VersionTLS13,
+		CurvePreferences:       []tls.CurveID{tls.CurveID(curveValue)},
+		SessionTicketsDisabled: true,
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen for TLS server process: %v", err)
+	}
+	defer listener.Close()
+	fmt.Printf("%s%s\n", tlsServerReadyPrefix, listener.Addr())
 
-func (h *tlsHarness) withServerError(err error) error {
-	if serverErr := h.serverError(); serverErr != nil {
-		return serverErr
+	for {
+		connection, err := listener.Accept()
+		if err != nil {
+			t.Fatalf("accept TLS connection: %v", err)
+		}
+		if err := handleTLSConnection(connection, serverConfig); err != nil {
+			t.Fatal(err)
+		}
 	}
-	return err
 }
 
 func verifyConnectionState(state tls.ConnectionState, expectedCurve tls.CurveID) error {
