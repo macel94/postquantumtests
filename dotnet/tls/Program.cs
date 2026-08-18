@@ -571,8 +571,13 @@ static void VerifyOpenSslGroupAvailable(string group, string configPath)
         RedirectStandardOutput = true,
         UseShellExecute = false,
     };
-    startInfo.ArgumentList.Add("list");
-    startInfo.ArgumentList.Add("-tls-groups");
+    startInfo.ArgumentList.Add("s_client");
+    startInfo.ArgumentList.Add("-groups");
+    startInfo.ArgumentList.Add(group);
+    startInfo.ArgumentList.Add("-tls1_3");
+    startInfo.ArgumentList.Add("-connect");
+    startInfo.ArgumentList.Add("127.0.0.1:1");
+    startInfo.ArgumentList.Add("-brief");
     startInfo.Environment["OPENSSL_CONF"] = configPath;
 
     using Process process = Process.Start(startInfo)
@@ -581,20 +586,23 @@ static void VerifyOpenSslGroupAvailable(string group, string configPath)
     string errorOutput = process.StandardError.ReadToEnd();
     process.WaitForExit();
 
-    if (process.ExitCode != 0)
-    {
-        throw new InvalidOperationException(
-            $"The openssl group preflight failed with code {process.ExitCode}.{Environment.NewLine}{errorOutput}");
-    }
-
-    bool groupIsAvailable = output
-        .Split([':', ' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-        .Any(candidate => string.Equals(candidate, group, StringComparison.OrdinalIgnoreCase));
-
-    if (!groupIsAvailable)
+    string diagnostics = output + Environment.NewLine + errorOutput;
+    if (diagnostics.Contains("Call to SSL_CONF_cmd(-groups", StringComparison.OrdinalIgnoreCase))
     {
         throw new PlatformNotSupportedException(
-            $"OpenSSL does not advertise the required TLS 1.3 group '{group}'.");
+            $"OpenSSL does not support the required TLS 1.3 group '{group}'.{Environment.NewLine}{diagnostics}");
+    }
+
+    if (process.ExitCode == 0)
+    {
+        return;
+    }
+
+    if (!diagnostics.Contains("BIO_connect", StringComparison.OrdinalIgnoreCase)
+        && !diagnostics.Contains("Connection refused", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            $"The openssl group preflight failed with code {process.ExitCode}.{Environment.NewLine}{diagnostics}");
     }
 }
 
