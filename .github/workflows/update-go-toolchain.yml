@@ -1,0 +1,62 @@
+name: Update Go toolchain
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    name: Check for a stable Go release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Update Go version references
+        run: bash .github/scripts/update-go-version.sh
+
+      - name: Set up updated Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache: true
+          cache-dependency-path: go/go.mod
+
+      - name: Run Go tests
+        working-directory: go
+        run: go test ./...
+
+      - name: Create pull request
+        if: ${{ success() }}
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- .devcontainer go/go.mod; then
+            echo "Go toolchain is already current."
+            exit 0
+          fi
+
+          open_pr_count="$(gh pr list --state open --base "$DEFAULT_BRANCH" --search "Update Go toolchain in:title" --json number --jq 'length')"
+          if [[ "$open_pr_count" -gt 0 ]]; then
+            echo "A Go toolchain update pull request is already open."
+            exit 0
+          fi
+
+          branch="automation/update-go-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --create "$branch"
+          git add .devcontainer go/go.mod
+          git commit --message "build: update Go toolchain"
+          git push --set-upstream origin "$branch"
+          gh pr create \
+            --base "$DEFAULT_BRANCH" \
+            --head "$branch" \
+            --title "build: update Go toolchain" \
+            --body "The official stable Go release changed. This PR synchronizes go/go.mod and the Go devcontainer features after the Go test suite passed."

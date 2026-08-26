@@ -11,7 +11,7 @@ This repository compares post-quantum and classical key exchange costs in .NET a
 
 - Linux
 - .NET 10 SDK, or the .NET 11 preview SDK for `net11.0` runs
-- Go 1.26 or newer
+- Go version declared in `go/go.mod`
 - OpenSSL 3.5.0 or 4.0.0 for the .NET TLS post-quantum scenario
 
 The Go tests use only the standard library. They do not require OpenSSL.
@@ -171,7 +171,7 @@ The raw Go tests use ML-KEM-768 and ECDH P-256. The TLS tests create a local ECD
 
 ## Devcontainers
 
-The default [devcontainer.json](.devcontainer/devcontainer.json) provides Go 1.26 and .NET 10 without compiling OpenSSL. Use one of the specialized containers when working on the .NET/OpenSSL matrix:
+The default [devcontainer.json](.devcontainer/devcontainer.json) provides the Go version declared in `go/go.mod` and .NET 10 without compiling OpenSSL. Use one of the specialized containers when working on the .NET/OpenSSL matrix:
 
 | Devcontainer | Environment |
 | --- | --- |
@@ -203,7 +203,7 @@ fallback configurations from entering the comparison.
 
 ## Cross-language comparison reports
 
-The [Cross-Language Benchmark Comparison](.github/workflows/benchmark-comparison.yml) workflow runs Go 1.26.6, .NET 10, and .NET 11 preview serially on the same `ubuntu-24.04` runner. It exercises .NET against OpenSSL 3.5.0 and 4.0.0, using an explicit provider prefix for every provider row. Its artifacts contain:
+The [Cross-Language Benchmark Comparison](.github/workflows/benchmark-comparison.yml) workflow reads its Go version from `go/go.mod`, then runs Go, .NET 10, and .NET 11 preview serially on the same `ubuntu-24.04` runner. It exercises .NET against OpenSSL 3.5.0 and 4.0.0, using an explicit provider prefix for every provider row. Its artifacts contain:
 
 - `comparison.json`, with versioned machine-readable records for all five matrix legs.
 - `comparison.md`, with side-by-side prebuilt benchmark, clean-build, cached-build, raw crypto, TLS, and PQ-support tables.
@@ -213,4 +213,4 @@ Go's OpenSSL field is `null` and displayed as `Not used` because Go uses its sta
 
 ## Dependency updates
 
-[Dependabot](.github/dependabot.yml) checks GitHub Actions, Dev Containers, Go modules, and NuGet projects weekly. Each ecosystem has a catch-all update group and an `open-pull-requests-limit` of `1`, so Dependabot creates at most one grouped update PR per ecosystem. The Go module currently has no third-party dependencies, and the .NET projects have no NuGet package references.
+[Dependabot](.github/dependabot.yml) checks GitHub Actions, Dev Containers, Go modules, and NuGet projects daily. Each ecosystem has a catch-all update group and an `open-pull-requests-limit` of `20`, so eligible updates are not blocked by a low PR cap. The [Go toolchain updater](.github/workflows/update-go-toolchain.yml) separately tracks stable Go releases, updates `go/go.mod` and the Go devcontainer features, and opens a pull request when the toolchain changes. The Go module currently has no third-party dependencies, and the .NET projects have no NuGet package references.
