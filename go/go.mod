@@ -1,3 +1,3 @@
 module github.com/macel94/postquantumtests/go
 
-go 1.27.1
+go 1.27.2
