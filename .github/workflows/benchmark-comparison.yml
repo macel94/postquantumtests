@@ -126,14 +126,14 @@ jobs:
             --require-complete
 
       - name: Upload comparison inputs
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: comparison-inputs
           path: comparison-inputs/
           if-no-files-found: error
 
       - name: Upload comparison report
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: comparison-report
           path: comparison/
