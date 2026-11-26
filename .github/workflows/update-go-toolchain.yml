@@ -21,7 +21,7 @@ jobs:
         run: bash .github/scripts/update-go-version.sh
 
       - name: Set up updated Go
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: go/go.mod
           cache: true
